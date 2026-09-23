@@ -1,8 +1,9 @@
 import { Redis } from 'ioredis';
+import { createAdminService } from './admin/service.js';
 import { buildApp } from './app.js';
 import { createFormAdapters } from './capture/adapters/index.js';
 import { createCaptureLead } from './capture/captureLead.js';
-import { loadConfig } from './config.js';
+import { alertThresholds, loadConfig } from './config.js';
 import { loadContactConfig } from './contact/config.js';
 import { loadCrmConfig } from './crm/config.js';
 import { hubspotWebhook } from './crm/webhook.js';
@@ -11,7 +12,7 @@ import { createReplyAdapters } from './inbound/adapters/index.js';
 import { createHandleInbound } from './inbound/handleInbound.js';
 import { createOptOut } from './inbound/optOut.js';
 import { verifyUnsubscribeToken } from './inbound/unsubscribe.js';
-import { createJobQueue } from './queue.js';
+import { createJobQueue, createQueueMonitor } from './queue.js';
 
 const config = loadConfig();
 const contactConfig = loadContactConfig(config.CONTACT_CONFIG_PATH);
@@ -26,6 +27,10 @@ const replyAdapters = createReplyAdapters(config);
 const unsubscribeSecret = config.UNSUBSCRIBE_SECRET;
 const hubspotSecret = config.CRM_PROVIDER === 'hubspot' ? config.HUBSPOT_CLIENT_SECRET : undefined;
 const publicBaseUrl = config.PUBLIC_BASE_URL;
+const adminToken = config.ADMIN_TOKEN;
+const monitor = adminToken
+  ? createQueueMonitor(redis, (err) => app.log.warn({ err }, 'redis connection error'))
+  : undefined;
 
 const app = await buildApp({
   config,
@@ -61,10 +66,26 @@ const app = await buildApp({
           publicBaseUrl,
         }
       : undefined,
+  admin:
+    adminToken && monitor
+      ? {
+          token: adminToken,
+          service: createAdminService({
+            db,
+            queue,
+            monitor,
+            thresholds: alertThresholds(config),
+            onEnqueueError: (err) =>
+              app.log.warn({ err }, 'resume: step not enqueued; the worker will reconcile it'),
+          }),
+          boardQueues: monitor.queues,
+        }
+      : undefined,
 });
 
 async function closeClients() {
   await queue.close();
+  await monitor?.close();
   redis.disconnect();
   await db.$disconnect();
 }
@@ -87,6 +108,7 @@ try {
       replyProviders: Object.keys(replyAdapters),
       unsubscribeLinks: Boolean(unsubscribeSecret),
       crmWebhook: Boolean(hubspotSecret && publicBaseUrl),
+      admin: Boolean(adminToken),
     },
     'webhooks enabled',
   );

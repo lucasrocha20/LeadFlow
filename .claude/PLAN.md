@@ -196,7 +196,7 @@ Implementation notes:
 - CRM → LeadFlow (done): `POST /webhooks/crm/hubspot` (v3 signature using `HUBSPOT_CLIENT_SECRET` over `PUBLIC_BASE_URL` + path, requests older than 5 min rejected). `contact.propertyChange` events matching an `inbound` rule set the lead's status (default `lifecyclestage=customer` → `converted`), record `status_changed` and stop the follow-up.
 - Known limits: a note can be duplicated if the process dies between HubSpot accepting it and the cursor update (at-least-once). A phone-only contact can be duplicated the same way on creation. The throttle is per worker process. Events that share a transaction have the same timestamp, so their order in the CRM is arbitrary.
 
-### Phase 6 — Operations and visibility
+### Phase 6 — Operations and visibility ✅ (done 2026-09-23)
 
 1. Admin endpoints (or a small dashboard): list and filter leads, view one lead's timeline, pause/resume an enrollment, requeue failed jobs.
 2. Metrics: time-to-first-contact, reply rate per sequence step, conversion by source/tier, failed sends.

@@ -5,6 +5,7 @@ import type { CrmWebhook } from './crm/webhook.js';
 import type { HandleInbound } from './inbound/handleInbound.js';
 import type { ReplyAdapter } from './inbound/types.js';
 import { loggerOptions, type LoggerConfig } from './logger.js';
+import { adminRoutes, type AdminDeps } from './routes/admin.js';
 import { healthRoutes, type ReadinessCheck } from './routes/health.js';
 import { crmRoutes } from './routes/crm.js';
 import { replyRoutes } from './routes/replies.js';
@@ -23,6 +24,8 @@ export interface AppDeps {
   unsubscribe?: UnsubscribeDeps;
   /** CRM → LeadFlow webhook; only served when configured. */
   crmWebhook?: { webhook: CrmWebhook; publicBaseUrl: string };
+  /** Admin API and queue UI under /admin; only served when configured (ADMIN_TOKEN). */
+  admin?: AdminDeps;
 }
 
 export async function buildApp(deps: AppDeps) {
@@ -43,6 +46,9 @@ export async function buildApp(deps: AppDeps) {
   }
   if (deps.crmWebhook) {
     await app.register(crmRoutes, deps.crmWebhook);
+  }
+  if (deps.admin) {
+    await app.register(adminRoutes, { ...deps.admin, prefix: '/admin' });
   }
 
   return app;

@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { AdminService } from '../src/admin/service.js';
 import type { AppDeps } from '../src/app.js';
 import type { JobQueue } from '../src/queue.js';
 
@@ -29,4 +30,19 @@ export function testAppDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     handleInbound: notUsed,
     ...overrides,
   };
+}
+
+/** An AdminService whose methods are spies; unstubbed ones reject. */
+export function fakeAdminService() {
+  return {
+    listLeads: vi.fn<AdminService['listLeads']>(notUsed),
+    getLead: vi.fn<AdminService['getLead']>(notUsed),
+    pauseEnrollment: vi.fn<AdminService['pauseEnrollment']>(notUsed),
+    resumeEnrollment: vi.fn<AdminService['resumeEnrollment']>(notUsed),
+    queueStats: vi.fn<AdminService['queueStats']>(notUsed),
+    retryFailed: vi.fn<AdminService['retryFailed']>(notUsed),
+    requeueCrmDeadLetters: vi.fn<AdminService['requeueCrmDeadLetters']>(notUsed),
+    metrics: vi.fn<AdminService['metrics']>(notUsed),
+    alerts: vi.fn<AdminService['alerts']>(notUsed),
+  } satisfies AdminService;
 }

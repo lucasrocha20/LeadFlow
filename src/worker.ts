@@ -1,7 +1,8 @@
 import { Worker, type Processor } from 'bullmq';
 import { Redis } from 'ioredis';
 import { pino } from 'pino';
-import { loadConfig } from './config.js';
+import { evaluateAlerts, notifyAlerts, redisAlertStore, webhookSender } from './admin/alerts.js';
+import { alertThresholds, loadConfig } from './config.js';
 import { createMessageAdapters } from './contact/adapters/index.js';
 import { followUpSequences, loadContactConfig, referencedTemplates } from './contact/config.js';
 import { createPlanFirstContact } from './contact/planFirstContact.js';
@@ -28,6 +29,7 @@ import {
   LEAD_QUALIFIED,
   SEND_MESSAGE,
   createJobQueue,
+  createQueueMonitor,
   type CrmSyncJob,
   type FollowUpStepJob,
   type LeadCapturedJob,
@@ -216,6 +218,29 @@ async function crmSweep() {
 await crmSweep();
 const crmSweepTimer = setInterval(() => void crmSweep(), CRM_SWEEP_EVERY_MS);
 
+// Alerts: queue backlog, failed sends, parked CRM syncs. Redis holds the cooldowns, so
+// several workers (or a restart) don't repeat a notification.
+const ALERT_CHECK_EVERY_MS = 60_000;
+const monitor = createQueueMonitor(redis, (err) => log.warn({ err }, 'redis connection error'));
+const alertStore = redisAlertStore(redis);
+const sendAlert = config.ALERT_WEBHOOK_URL ? webhookSender(config.ALERT_WEBHOOK_URL) : undefined;
+async function checkAlerts() {
+  try {
+    const alerts = await evaluateAlerts({ db, monitor, thresholds: alertThresholds(config) });
+    await notifyAlerts({
+      alerts,
+      store: alertStore,
+      send: sendAlert,
+      cooldownMs: config.ALERT_COOLDOWN_MINUTES * 60_000,
+      log,
+    });
+  } catch (err) {
+    log.error({ err }, 'alert check failed');
+  }
+}
+await checkAlerts();
+const alertTimer = setInterval(() => void checkAlerts(), ALERT_CHECK_EVERY_MS);
+
 log.info(
   {
     queues: [LEAD_CAPTURED, LEAD_QUALIFIED, SEND_MESSAGE, FOLLOW_UP_STEP, CRM_SYNC],
@@ -225,6 +250,7 @@ log.info(
     followUpSequences: sequences,
     unsubscribeLinks: Boolean(baseUrl && unsubscribeSecret),
     crm: crm.provider,
+    alertWebhook: Boolean(sendAlert),
   },
   'worker started',
 );
@@ -233,8 +259,10 @@ async function shutdown(signal: string) {
   log.info({ signal }, 'shutting down');
   clearInterval(reconcileTimer);
   clearInterval(crmSweepTimer);
+  clearInterval(alertTimer);
   await Promise.all(workers.map((w) => w.close()));
   await queue.close();
+  await monitor.close();
   redis.disconnect();
   workerConnection.disconnect();
   await db.$disconnect();

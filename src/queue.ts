@@ -172,3 +172,70 @@ export function createJobQueue(
     },
   };
 }
+
+/** Queues the worker consumes (the dead-letter queue is only inspected). */
+export const WORK_QUEUES = [LEAD_CAPTURED, LEAD_QUALIFIED, SEND_MESSAGE, FOLLOW_UP_STEP, CRM_SYNC];
+
+export interface QueueStats {
+  name: string;
+  waiting: number;
+  active: number;
+  delayed: number;
+  failed: number;
+  /** How long the oldest waiting job has been waiting, in ms (0 when none). */
+  oldestWaitingMs: number;
+}
+
+/** Read and repair access to the queues, for the admin API, Bull Board and alerts. */
+export interface QueueMonitor {
+  /** BullMQ queues, including the dead-letter queue, for Bull Board. */
+  readonly queues: Queue[];
+  stats(): Promise<QueueStats[]>;
+  /** Moves a work queue's failed jobs back to waiting. Null for an unknown queue. */
+  retryFailed(name: string): Promise<number | null>;
+  close(): Promise<void>;
+}
+
+export function createQueueMonitor(
+  connection: Redis,
+  onError: (err: Error) => void = () => {},
+  now: () => number = Date.now,
+): QueueMonitor {
+  const work = new Map(WORK_QUEUES.map((name) => [name, new Queue(name, { connection })]));
+  const crmDead = new Queue<CrmDeadLetter>(CRM_SYNC_DEAD, { connection });
+  const queues = [...work.values(), crmDead];
+  for (const queue of queues) queue.on('error', onError);
+
+  return {
+    queues,
+    async stats() {
+      return Promise.all(
+        [...work.values()].map(async (queue) => {
+          const [counts, [oldest]] = await Promise.all([
+            queue.getJobCounts('waiting', 'active', 'delayed', 'failed'),
+            queue.getJobs(['waiting'], 0, 0, true),
+          ]);
+          return {
+            name: queue.name,
+            waiting: counts['waiting'] ?? 0,
+            active: counts['active'] ?? 0,
+            delayed: counts['delayed'] ?? 0,
+            failed: counts['failed'] ?? 0,
+            oldestWaitingMs: oldest ? Math.max(0, now() - oldest.timestamp) : 0,
+          };
+        }),
+      );
+    },
+    async retryFailed(name) {
+      const queue = work.get(name);
+      if (!queue) return null;
+      const failed = await queue.getFailedCount();
+      // Every job handler is idempotent (event dedupe keys), so a retry can't double-send.
+      if (failed > 0) await queue.retryJobs({ state: 'failed' });
+      return failed;
+    },
+    async close() {
+      await Promise.all(queues.map((q) => q.close()));
+    },
+  };
+}

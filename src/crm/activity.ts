@@ -78,6 +78,13 @@ export function describeEvent(
         return [`Enrolled in follow-up sequence ${text(p['sequence'])}`, ''];
       case 'sequence_stopped':
         return [`Follow-up ${text(p['sequence'])} stopped`, `Reason: ${text(p['reason'])}`];
+      case 'sequence_paused':
+        return [
+          `Follow-up ${text(p['sequence'])} paused`,
+          p['reason'] ? `Reason: ${text(p['reason'])}` : '',
+        ];
+      case 'sequence_resumed':
+        return [`Follow-up ${text(p['sequence'])} resumed`, ''];
       case 'sequence_completed':
         return [`Follow-up ${text(p['sequence'])} finished without a reply`, ''];
       case 'status_changed':

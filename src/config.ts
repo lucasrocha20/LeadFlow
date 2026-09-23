@@ -61,6 +61,25 @@ const baseSchema = z.object({
   HUBSPOT_ACCESS_TOKEN: optionalSecret,
   // The app's client secret; enables the HubSpot → LeadFlow webhook (needs PUBLIC_BASE_URL).
   HUBSPOT_CLIENT_SECRET: optionalSecret,
+
+  // Admin API (/admin/api) and queue UI (/admin/queues) are only served when this is set.
+  // Send it as a bearer token, or as the password of the browser's login prompt.
+  ADMIN_TOKEN: z.preprocess(
+    emptyAsUndefined,
+    z.string().min(24, 'Use at least 24 characters (e.g. `openssl rand -hex 24`)').optional(),
+  ),
+
+  // Alerts (checked by the worker every minute). Posted as {"text": …} (Slack-compatible
+  // incoming webhook); without a URL they are only logged.
+  ALERT_WEBHOOK_URL: z.preprocess(emptyAsUndefined, z.url({ protocol: /^https?$/ }).optional()),
+  // A work queue with this many ready jobs, or one that has waited this long, is backed up.
+  ALERT_QUEUE_BACKLOG: z.coerce.number().int().positive().default(500),
+  ALERT_QUEUE_WAIT_MINUTES: z.coerce.number().int().positive().default(15),
+  // This many failed sends on one channel within the window.
+  ALERT_SEND_FAILURES: z.coerce.number().int().positive().default(5),
+  ALERT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  // A firing alert is repeated at most this often.
+  ALERT_COOLDOWN_MINUTES: z.coerce.number().int().positive().default(60),
 });
 
 // Credentials are only required for the provider actually selected.
@@ -104,4 +123,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid environment configuration:\n${z.prettifyError(result.error)}`);
   }
   return result.data;
+}
+
+/** Alert thresholds from the ALERT_* settings. */
+export function alertThresholds(config: Config) {
+  return {
+    queueBacklog: config.ALERT_QUEUE_BACKLOG,
+    queueWaitMinutes: config.ALERT_QUEUE_WAIT_MINUTES,
+    sendFailures: config.ALERT_SEND_FAILURES,
+    windowMinutes: config.ALERT_WINDOW_MINUTES,
+  };
 }

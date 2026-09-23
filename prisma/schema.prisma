@@ -45,10 +45,14 @@ enum LeadEventType {
   crm_synced
   crm_sync_failed
   rep_notified
+  sequence_paused
+  sequence_resumed
 }
 
 enum EnrollmentStatus {
   active
+  // Paused by an operator: no steps run until it's resumed. Replies and opt-outs still stop it.
+  paused
   stopped
   completed
 }

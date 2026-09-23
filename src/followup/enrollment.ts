@@ -1,5 +1,5 @@
 import { asJson, type Db } from '../db.js';
-import type { Lead, LeadTier, Prisma } from '../generated/prisma/client.js';
+import type { EnrollmentStatus, Lead, LeadTier, Prisma } from '../generated/prisma/client.js';
 import type { FollowUpStepJob } from '../queue.js';
 
 type Tx = Prisma.TransactionClient;
@@ -49,10 +49,11 @@ export async function enrollLead(
   return { enrollmentId: enrollment.id, step: first.order, runAt: nextRunAt.getTime() };
 }
 
-/** Stops every active enrollment of the lead, recording why. */
+/** Stops every active or paused enrollment of the lead, recording why. */
 export async function stopEnrollments(tx: Tx, leadId: string, reason: string) {
+  // Paused ones too: a lead who replies or opts out while paused must not be resumed.
   const active = await tx.enrollment.findMany({
-    where: { leadId, status: 'active' },
+    where: { leadId, status: { in: ['active', 'paused'] } },
     include: { sequence: { select: { name: true } } },
   });
   for (const enrollment of active) {
@@ -97,4 +98,78 @@ export async function reconcileEnrollments(
     });
   }
   return due.length;
+}
+
+export type PauseOutcome =
+  | { status: 'paused' | 'resumed'; enrollmentId: string; leadId: string }
+  | { status: 'not_found' }
+  | { status: 'conflict'; current: EnrollmentStatus };
+
+/**
+ * Pauses an active enrollment: step jobs that fire meanwhile skip it, and follow-up messages
+ * already queued are dropped at send time. Replies and opt-outs still stop it.
+ */
+export async function pauseEnrollment(
+  db: Db,
+  enrollmentId: string,
+  reason?: string,
+): Promise<PauseOutcome> {
+  return db.$transaction(async (tx) => {
+    const enrollment = await lockEnrollment(tx, enrollmentId);
+    if (!enrollment) return { status: 'not_found' };
+    if (enrollment.status !== 'active') return { status: 'conflict', current: enrollment.status };
+    await tx.enrollment.update({ where: { id: enrollmentId }, data: { status: 'paused' } });
+    await tx.leadEvent.create({
+      data: {
+        leadId: enrollment.leadId,
+        type: 'sequence_paused',
+        payload: asJson({ enrollmentId, sequence: enrollment.sequence.name, reason }),
+      },
+    });
+    return { status: 'paused', enrollmentId, leadId: enrollment.leadId };
+  });
+}
+
+/**
+ * Resumes a paused enrollment and returns the step job to enqueue. The step that was due is
+ * rescheduled for now (never earlier than planned), and later steps keep their gaps.
+ */
+export async function resumeEnrollment(
+  db: Db,
+  enrollmentId: string,
+  now = new Date(),
+): Promise<PauseOutcome & { job?: FollowUpStepJob }> {
+  return db.$transaction(async (tx) => {
+    const enrollment = await lockEnrollment(tx, enrollmentId);
+    if (!enrollment) return { status: 'not_found' };
+    if (enrollment.status !== 'paused') return { status: 'conflict', current: enrollment.status };
+    // A step job that fired while paused was consumed; a new runAt gives the job a new id.
+    // One still pending keeps its (future) runAt and id, so enqueueing it again is a no-op.
+    const nextRunAt = new Date(Math.max(enrollment.nextRunAt?.getTime() ?? 0, now.getTime()));
+    await tx.enrollment.update({
+      where: { id: enrollmentId },
+      data: { status: 'active', nextRunAt },
+    });
+    await tx.leadEvent.create({
+      data: {
+        leadId: enrollment.leadId,
+        type: 'sequence_resumed',
+        payload: asJson({ enrollmentId, sequence: enrollment.sequence.name }),
+      },
+    });
+    return {
+      status: 'resumed',
+      enrollmentId,
+      leadId: enrollment.leadId,
+      job: { enrollmentId, step: enrollment.currentStep, runAt: nextRunAt.getTime() },
+    };
+  });
+}
+
+async function lockEnrollment(tx: Tx, enrollmentId: string) {
+  await tx.$executeRaw`SELECT 1 FROM "Enrollment" WHERE id = ${enrollmentId} FOR UPDATE`;
+  return tx.enrollment.findUnique({
+    where: { id: enrollmentId },
+    include: { sequence: { select: { name: true } } },
+  });
 }

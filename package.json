@@ -39,6 +39,8 @@
   },
   "homepage": "https://github.com/lucasrocha20/LeadFlow#readme",
   "dependencies": {
+    "@bull-board/api": "^9.10.1",
+    "@bull-board/fastify": "^9.10.1",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bullmq": "^6.3.8",

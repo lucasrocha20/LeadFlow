@@ -73,6 +73,20 @@ describe('describeEvent', () => {
       'Reason: replied',
     ],
     [
+      'sequence_paused',
+      { sequence: 'hot_follow_up', reason: 'talking by phone' },
+      null,
+      'LeadFlow: Follow-up hot_follow_up paused',
+      'Reason: talking by phone',
+    ],
+    [
+      'sequence_resumed',
+      { sequence: 'hot_follow_up' },
+      null,
+      'LeadFlow: Follow-up hot_follow_up resumed',
+      '',
+    ],
+    [
       'sequence_completed',
       { sequence: 'cold_follow_up' },
       null,
