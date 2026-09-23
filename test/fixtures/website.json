@@ -1,0 +1,12 @@
+{
+  "submissionId": "sub_123",
+  "name": "João Pereira",
+  "email": "JOAO@example.com",
+  "phone": "+55 21 99876-5432",
+  "company": "Pereira & Filhos",
+  "timezone": "America/Sao_Paulo",
+  "consentEmail": true,
+  "consentMessaging": false,
+  "utm": { "utm_source": "newsletter", "utm_campaign": "sept" },
+  "fields": { "message": "Quero uma demo", "budget": "5k-10k" }
+}

@@ -1,0 +1,63 @@
+{
+  "event_id": "01JAB6T2QZ9Y3VQX4R3WJ5P1KD",
+  "event_type": "form_response",
+  "form_response": {
+    "form_id": "lT4Z3j",
+    "token": "a3a12ec67a1365927098a606107fac15",
+    "submitted_at": "2026-09-23T12:00:00Z",
+    "landed_at": "2026-09-23T11:58:31Z",
+    "hidden": {
+      "utm_source": "google",
+      "utm_medium": "cpc",
+      "utm_campaign": "spring-launch",
+      "page": "/pricing"
+    },
+    "definition": {
+      "id": "lT4Z3j",
+      "title": "Talk to sales",
+      "fields": []
+    },
+    "answers": [
+      {
+        "type": "text",
+        "text": "  Maria   da Silva ",
+        "field": { "id": "f1", "type": "short_text", "ref": "name" }
+      },
+      {
+        "type": "email",
+        "email": " Maria.Silva@Acme.COM ",
+        "field": { "id": "f2", "type": "email", "ref": "work_email" }
+      },
+      {
+        "type": "phone_number",
+        "phone_number": "(11) 98765-4321",
+        "field": { "id": "f3", "type": "phone_number", "ref": "phone" }
+      },
+      {
+        "type": "text",
+        "text": "Acme Ltda",
+        "field": { "id": "f4", "type": "short_text", "ref": "company" }
+      },
+      {
+        "type": "choice",
+        "choice": { "label": "50-200" },
+        "field": { "id": "f5", "type": "multiple_choice", "ref": "company_size" }
+      },
+      {
+        "type": "number",
+        "number": 20000,
+        "field": { "id": "f6", "type": "number", "ref": "budget" }
+      },
+      {
+        "type": "choices",
+        "choices": { "labels": ["CRM sync", "WhatsApp"] },
+        "field": { "id": "f7", "type": "multiple_choice", "ref": "interests" }
+      },
+      {
+        "type": "boolean",
+        "boolean": true,
+        "field": { "id": "f8", "type": "legal", "ref": "consent" }
+      }
+    ]
+  }
+}

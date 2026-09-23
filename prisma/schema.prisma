@@ -60,8 +60,9 @@ model Lead {
   phone      String? // E.164
   company    String?
   source     String // e.g. "website", "typeform"
-  utm        Json?
-  rawPayload Json
+  utm        Json? // first-touch UTM params
+  fields     Json? // normalized form answers keyed by field name (input for scoring)
+  rawPayload Json // first submission as received
   score      Int?
   tier       LeadTier?
   status     LeadStatus @default(new)
@@ -90,6 +91,8 @@ model LeadEvent {
   type      LeadEventType
   channel   Channel?
   payload   Json?
+  // Idempotency key for events caused by inbound webhooks, e.g. "typeform:<response token>".
+  dedupeKey String?       @unique
   createdAt DateTime      @default(now())
 
   @@index([leadId, createdAt])

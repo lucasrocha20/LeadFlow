@@ -7,7 +7,12 @@ const config = { NODE_ENV: 'test', LOG_LEVEL: 'silent' } as const;
 let app: Awaited<ReturnType<typeof buildApp>> | undefined;
 
 async function makeApp(readinessChecks: Record<string, ReadinessCheck>) {
-  app = await buildApp({ config, readinessChecks });
+  app = await buildApp({
+    config,
+    readinessChecks,
+    formAdapters: {},
+    captureLead: () => Promise.reject(new Error('not used')),
+  });
   return app;
 }
 

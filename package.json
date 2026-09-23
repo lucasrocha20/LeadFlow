@@ -19,6 +19,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:db": "node --env-file=.env node_modules/vitest/vitest.mjs run test/db",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -36,8 +37,11 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "bullmq": "^6.3.8",
     "dotenv": "^18.0.3",
     "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
+    "libphonenumber-js": "^1.13.13",
     "pg": "^8.23.0",
     "zod": "^4.6.5"
   },

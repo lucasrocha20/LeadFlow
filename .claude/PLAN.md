@@ -79,6 +79,17 @@ Design rules:
 
 ---
 
+## Avoid in version 1:
+- Microservices.
+- Multi-tenancy.
+- Complex authentication.
+- Event sourcing.
+- Full DDD architecture.
+- Separate frontend/backend monorepo.
+- Advanced observability.
+- Multiple AI providers from the beginning.
+- Overengeneering
+
 ## Implementation steps
 
 ### Phase 0 — Project setup ✅ (done 2026-09-22)
@@ -91,7 +102,7 @@ Design rules:
 
 **Done when:** `docker compose up` plus the dev server starts, `/health` returns 200, and CI is green.
 
-### Phase 1 — Automatic capture
+### Phase 1 — Automatic capture ✅ (done 2026-09-23)
 
 1. `POST /webhooks/forms/:provider` endpoint with a signature/secret check for each provider.
 2. `FormAdapter` interface: `verify(req)` and `normalize(payload) → LeadInput`.
@@ -101,6 +112,13 @@ Design rules:
 6. Save the `Lead` plus a `captured` event, reply 200 quickly, and enqueue `lead.captured`.
 
 **Done when:** a sample webhook creates exactly one lead (even when replayed), and a job is enqueued.
+
+Implementation notes:
+
+- Providers: `website` (shared secret in `X-Webhook-Secret`) and `typeform` (HMAC in `Typeform-Signature`). A provider is enabled only when its secret env var is set; otherwise its URL returns 404.
+- Idempotency: the `captured` event stores `dedupeKey = <source>:<externalId>` (unique). Typeform uses the response token. The website form uses `submissionId`, or a hash of the payload when that's missing. A replay returns 200 with `duplicate: true` and writes nothing.
+- Merge policy: match on email or phone (oldest lead wins) and fill blanks only. First-touch UTM wins, answers (`Lead.fields`) are merged with the newest winning, and consent stays once given. Each submission's raw payload is kept on its `captured` event. Advisory locks on email/phone serialize concurrent captures of the same person.
+- Queue: the job id is the `captured` event id. If enqueueing fails after the commit, the webhook returns 500, and the provider's retry hits the dedupe path, which enqueues the job again.
 
 ### Phase 2 — Qualification
 
