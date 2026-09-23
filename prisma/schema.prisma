@@ -68,7 +68,15 @@ model Lead {
   tier       LeadTier?
   status     LeadStatus @default(new)
   crmId      String?
-  timezone   String?
+
+  // CRM sync cursor: the last event pushed to the CRM (events are append-only, so progress
+  // lives here). Ordered by (createdAt, id).
+  crmSyncedThrough DateTime?
+  crmSyncedEventId String?
+  // Set when a sync is dead-lettered; the sweep skips the lead until it's requeued.
+  crmSyncFailedAt  DateTime?
+  crmSyncError     String?
+  timezone         String?
 
   consentEmail     Boolean @default(false)
   consentMessaging Boolean @default(false)

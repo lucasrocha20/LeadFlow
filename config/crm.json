@@ -1,0 +1,15 @@
+{
+  "syncDisqualified": true,
+  "stages": {
+    "new": { "hs_lead_status": "NEW", "lifecyclestage": "lead" },
+    "qualified": { "hs_lead_status": "OPEN", "lifecyclestage": "marketingqualifiedlead" },
+    "contacted": { "hs_lead_status": "ATTEMPTED_TO_CONTACT" },
+    "engaged": { "hs_lead_status": "CONNECTED", "lifecyclestage": "salesqualifiedlead" },
+    "unresponsive": { "hs_lead_status": "BAD_TIMING" },
+    "disqualified": { "hs_lead_status": "UNQUALIFIED" },
+    "do_not_contact": { "hs_lead_status": "UNQUALIFIED" },
+    "converted": { "lifecyclestage": "customer" }
+  },
+  "owners": {},
+  "inbound": [{ "property": "lifecyclestage", "value": "customer", "status": "converted" }]
+}

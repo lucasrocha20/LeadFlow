@@ -177,7 +177,7 @@ Implementation notes:
 - Opt-outs: a reply whose first line or subject is exactly a keyword from `contact.json` (`STOP`, `SAIR`, …, ignoring case, accents and punctuation), or the unsubscribe link, sets `do_not_contact`, records `opted_out` and stops sequences. Queued messages are dropped at send time. Links are `/unsubscribe?lead=…&token=<HMAC>` (`PUBLIC_BASE_URL` + `UNSUBSCRIBE_SECRET`, template var `{{unsubscribeUrl}}`). GET shows a confirmation button and POST unsubscribes, which also serves RFC 8058 one-click. Resend emails get `List-Unsubscribe` headers. Rep alerts never get the link.
 - Not done / known limits: the optional long-term re-engagement sequence. A lead re-qualified to a higher tier stays in its original sequence. An `unresponsive` lead that submits a form again is re-scored but not contacted again. WhatsApp delivery statuses are ignored. Email replies need a relay into the generic format (no provider-specific inbound adapter yet).
 
-### Phase 5 — CRM update
+### Phase 5 — CRM update ✅ (done 2026-09-23, dry-run verified; HubSpot API untested against a real portal)
 
 1. `CrmAdapter` interface: `upsertContact`, `updateStage`, `logActivity`, `assignOwner`.
 2. Implement the first CRM (HubSpot or Pipedrive). Map LeadFlow status to CRM pipeline stages.
@@ -186,6 +186,15 @@ Implementation notes:
 5. _(Optional)_ a CRM → LeadFlow webhook so that when a rep changes the stage (e.g. "won"), the sequence stops.
 
 **Done when:** every lead shows up in the CRM with the right stage and a complete activity timeline.
+
+Implementation notes:
+
+- CRM: HubSpot (`CRM_PROVIDER=hubspot`, private app token) plus `dry-run`. `CrmAdapter` has `upsertContact` (by stored id, then email; phone-only leads are created), `updateStage` (contact properties), `logActivity` (a note associated with the contact) and `assignOwner` (`hubspot_owner_id`, per tier, on creation).
+- `config/crm.json`: `stages` maps every LeadFlow status to CRM properties (`hs_lead_status`, `lifecyclestage`); `owners` per tier; `syncDisqualified`; `inbound` rules for CRM → LeadFlow. HubSpot won't move `lifecyclestage` backwards, so the default mapping only moves it forward.
+- The sync is pull-based: every 30s the worker finds leads with events past their cursor (`Lead.crmSyncedThrough` / `crmSyncedEventId`, since events are append-only) and queues one `crm.sync` job per lead (concurrency 1). The job upserts the contact, sets the stage from the current status, and pushes each new event as a note, advancing the cursor after each one. Events younger than 10s are held back, because `createdAt` is the transaction's start time and a slow transaction could otherwise commit behind the cursor.
+- Resilience: requests are throttled to 90 per 10s. A 429 pauses the queue (`worker.rateLimit`) without using up an attempt. 5xx/network errors are retried with exponential backoff (8 attempts, about 4 hours). Other 4xx errors, or the last attempt, dead-letter the lead: `crmSyncFailedAt`/`crmSyncError` are set, a `crm_sync_failed` event is recorded, and an entry goes to the `crm.sync.dead` queue. The sweep skips the lead until `npm run crm:requeue [leadId…]`. A contact deleted in HubSpot (404) is recreated.
+- CRM → LeadFlow (done): `POST /webhooks/crm/hubspot` (v3 signature using `HUBSPOT_CLIENT_SECRET` over `PUBLIC_BASE_URL` + path, requests older than 5 min rejected). `contact.propertyChange` events matching an `inbound` rule set the lead's status (default `lifecyclestage=customer` → `converted`), record `status_changed` and stop the follow-up.
+- Known limits: a note can be duplicated if the process dies between HubSpot accepting it and the cursor update (at-least-once). A phone-only contact can be duplicated the same way on creation. The throttle is per worker process. Events that share a transaction have the same timestamp, so their order in the CRM is arbitrary.
 
 ### Phase 6 — Operations and visibility
 
@@ -206,7 +215,7 @@ Implementation notes:
 
 ## Open decisions
 
-- Which CRM goes first (HubSpot vs. Pipedrive vs. other)?
+- ~~Which CRM goes first (HubSpot vs. Pipedrive vs. other)?~~ HubSpot (Phase 5).
 - Which messaging provider (WhatsApp Cloud API directly vs. Twilio)? _Phase 3 implemented WhatsApp Cloud API + Resend behind adapters; confirm before going live._
 - Which form sources matter at launch?
 - Is a UI needed in v1, or are CRM + admin endpoints enough?

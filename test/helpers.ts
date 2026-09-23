@@ -9,6 +9,9 @@ export function fakeQueue() {
     enqueueLeadQualified: vi.fn<JobQueue['enqueueLeadQualified']>(async () => {}),
     enqueueSendMessage: vi.fn<JobQueue['enqueueSendMessage']>(async () => {}),
     enqueueFollowUpStep: vi.fn<JobQueue['enqueueFollowUpStep']>(async () => {}),
+    enqueueCrmSync: vi.fn<JobQueue['enqueueCrmSync']>(async () => {}),
+    deadLetterCrmSync: vi.fn<JobQueue['deadLetterCrmSync']>(async () => {}),
+    clearCrmDeadLetters: vi.fn<JobQueue['clearCrmDeadLetters']>(async () => {}),
     close: async () => {},
   } satisfies JobQueue;
 }

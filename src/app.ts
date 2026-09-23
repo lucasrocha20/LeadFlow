@@ -1,10 +1,12 @@
 import Fastify from 'fastify';
 import type { CaptureLead } from './capture/captureLead.js';
 import type { FormAdapter } from './capture/types.js';
+import type { CrmWebhook } from './crm/webhook.js';
 import type { HandleInbound } from './inbound/handleInbound.js';
 import type { ReplyAdapter } from './inbound/types.js';
 import { loggerOptions, type LoggerConfig } from './logger.js';
 import { healthRoutes, type ReadinessCheck } from './routes/health.js';
+import { crmRoutes } from './routes/crm.js';
 import { replyRoutes } from './routes/replies.js';
 import { unsubscribeRoutes, type UnsubscribeDeps } from './routes/unsubscribe.js';
 import { webhookRoutes } from './routes/webhooks.js';
@@ -19,6 +21,8 @@ export interface AppDeps {
   whatsappVerifyToken?: string;
   /** Unsubscribe pages are only served when configured. */
   unsubscribe?: UnsubscribeDeps;
+  /** CRM → LeadFlow webhook; only served when configured. */
+  crmWebhook?: { webhook: CrmWebhook; publicBaseUrl: string };
 }
 
 export async function buildApp(deps: AppDeps) {
@@ -36,6 +40,9 @@ export async function buildApp(deps: AppDeps) {
   });
   if (deps.unsubscribe) {
     await app.register(unsubscribeRoutes, { unsubscribe: deps.unsubscribe });
+  }
+  if (deps.crmWebhook) {
+    await app.register(crmRoutes, deps.crmWebhook);
   }
 
   return app;

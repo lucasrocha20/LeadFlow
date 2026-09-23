@@ -52,6 +52,15 @@ const baseSchema = z.object({
   // Unsubscribe links (`{{unsubscribeUrl}}` in templates) need both.
   PUBLIC_BASE_URL: z.preprocess(emptyAsUndefined, z.url({ protocol: /^https?$/ }).optional()),
   UNSUBSCRIBE_SECRET: optionalSecret,
+
+  // CRM sync: `dry-run` logs what would be pushed.
+  CRM_PROVIDER: z.enum(['dry-run', 'hubspot']).default('dry-run'),
+  // Stage mapping, owners and CRM → LeadFlow rules (JSON).
+  CRM_CONFIG_PATH: z.string().min(1).default('config/crm.json'),
+  // HubSpot private app token (scopes: crm.objects.contacts.read/write).
+  HUBSPOT_ACCESS_TOKEN: optionalSecret,
+  // The app's client secret; enables the HubSpot → LeadFlow webhook (needs PUBLIC_BASE_URL).
+  HUBSPOT_CLIENT_SECRET: optionalSecret,
 });
 
 // Credentials are only required for the provider actually selected.
@@ -62,6 +71,7 @@ const requiredFor: [
 ][] = [
   ['MESSAGING_PROVIDER', 'whatsapp', ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID']],
   ['EMAIL_PROVIDER', 'resend', ['RESEND_API_KEY', 'EMAIL_FROM']],
+  ['CRM_PROVIDER', 'hubspot', ['HUBSPOT_ACCESS_TOKEN']],
 ];
 
 const configSchema = baseSchema.superRefine((config, ctx) => {

@@ -4,6 +4,8 @@ import { createFormAdapters } from './capture/adapters/index.js';
 import { createCaptureLead } from './capture/captureLead.js';
 import { loadConfig } from './config.js';
 import { loadContactConfig } from './contact/config.js';
+import { loadCrmConfig } from './crm/config.js';
+import { hubspotWebhook } from './crm/webhook.js';
 import { createDb } from './db.js';
 import { createReplyAdapters } from './inbound/adapters/index.js';
 import { createHandleInbound } from './inbound/handleInbound.js';
@@ -13,6 +15,7 @@ import { createJobQueue } from './queue.js';
 
 const config = loadConfig();
 const contactConfig = loadContactConfig(config.CONTACT_CONFIG_PATH);
+const crmConfig = loadCrmConfig(config.CRM_CONFIG_PATH);
 const db = createDb(config.DATABASE_URL);
 // Fail fast instead of buffering commands while Redis is down, so webhooks return an error
 // (and the provider retries) rather than hanging.
@@ -21,6 +24,8 @@ const queue = createJobQueue(redis, (err) => app.log.warn({ err }, 'redis connec
 const formAdapters = createFormAdapters(config);
 const replyAdapters = createReplyAdapters(config);
 const unsubscribeSecret = config.UNSUBSCRIBE_SECRET;
+const hubspotSecret = config.CRM_PROVIDER === 'hubspot' ? config.HUBSPOT_CLIENT_SECRET : undefined;
+const publicBaseUrl = config.PUBLIC_BASE_URL;
 
 const app = await buildApp({
   config,
@@ -49,6 +54,13 @@ const app = await buildApp({
         optOut: createOptOut(db),
       }
     : undefined,
+  crmWebhook:
+    hubspotSecret && publicBaseUrl
+      ? {
+          webhook: hubspotWebhook({ db, secret: hubspotSecret, config: crmConfig }),
+          publicBaseUrl,
+        }
+      : undefined,
 });
 
 async function closeClients() {
@@ -74,6 +86,7 @@ try {
       formProviders: Object.keys(formAdapters),
       replyProviders: Object.keys(replyAdapters),
       unsubscribeLinks: Boolean(unsubscribeSecret),
+      crmWebhook: Boolean(hubspotSecret && publicBaseUrl),
     },
     'webhooks enabled',
   );

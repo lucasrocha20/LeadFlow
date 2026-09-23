@@ -6,6 +6,14 @@ import { createMessageAdapters } from './contact/adapters/index.js';
 import { followUpSequences, loadContactConfig, referencedTemplates } from './contact/config.js';
 import { createPlanFirstContact } from './contact/planFirstContact.js';
 import { createSendMessage, runSendMessageJob } from './contact/sendMessage.js';
+import { createCrmAdapter } from './crm/adapters/index.js';
+import { loadCrmConfig } from './crm/config.js';
+import {
+  createSyncLead,
+  deadLetterCrmSync,
+  findLeadsToSync,
+  runCrmSyncJob,
+} from './crm/syncLead.js';
 import { createDb } from './db.js';
 import { reconcileEnrollments } from './followup/enrollment.js';
 import { createRunFollowUpStep } from './followup/runStep.js';
@@ -14,11 +22,13 @@ import { loggerOptions } from './logger.js';
 import { createQualifyLead } from './qualification/qualifyLead.js';
 import { loadScoringRules } from './qualification/rules.js';
 import {
+  CRM_SYNC,
   FOLLOW_UP_STEP,
   LEAD_CAPTURED,
   LEAD_QUALIFIED,
   SEND_MESSAGE,
   createJobQueue,
+  type CrmSyncJob,
   type FollowUpStepJob,
   type LeadCapturedJob,
   type LeadQualifiedJob,
@@ -30,6 +40,7 @@ const config = loadConfig();
 const log = pino(loggerOptions(config) || { enabled: false });
 const rules = loadScoringRules(config.SCORING_RULES_PATH);
 const contactConfig = loadContactConfig(config.CONTACT_CONFIG_PATH);
+const crmConfig = loadCrmConfig(config.CRM_CONFIG_PATH);
 const sequences = followUpSequences(contactConfig);
 const db = createDb(config.DATABASE_URL);
 
@@ -84,6 +95,8 @@ const sendMessage = createSendMessage({
       ? (leadId) => unsubscribeUrl(baseUrl, unsubscribeSecret, leadId)
       : undefined,
 });
+const crm = createCrmAdapter(config, log);
+const syncLead = createSyncLead({ db, crm, config: crmConfig });
 const runFollowUpStep = createRunFollowUpStep({
   db,
   queue,
@@ -91,7 +104,10 @@ const runFollowUpStep = createRunFollowUpStep({
 });
 
 function startWorker<T>(name: string, processor: Processor<T>, concurrency: number) {
-  const worker = new Worker<T>(name, processor, { connection: workerConnection, concurrency });
+  const worker: Worker<T> = new Worker<T>(name, processor, {
+    connection: workerConnection,
+    concurrency,
+  });
   worker.on('failed', (job, err) => {
     log.error({ err, queue: name, jobId: job?.id, attempts: job?.attemptsMade }, 'job failed');
   });
@@ -99,7 +115,7 @@ function startWorker<T>(name: string, processor: Processor<T>, concurrency: numb
   return worker;
 }
 
-const workers = [
+const workers: { close(): Promise<void> }[] = [
   startWorker<LeadCapturedJob>(
     LEAD_CAPTURED,
     async (job) => {
@@ -147,6 +163,28 @@ const workers = [
   ),
 ];
 
+// One lead at a time keeps each lead's timeline in order and stays well under CRM rate limits.
+const crmWorker: Worker<CrmSyncJob> = startWorker<CrmSyncJob>(
+  CRM_SYNC,
+  async (job) => {
+    const outcome = await runCrmSyncJob(syncLead, job, {
+      deadLetter: async (leadId, err) => {
+        log.error({ err, leadId }, 'crm sync dead-lettered');
+        await deadLetterCrmSync(db, queue, leadId, err);
+      },
+      rateLimit: async (ms) => {
+        log.warn({ ms }, 'crm rate limited; pausing sync');
+        await crmWorker.rateLimit(ms);
+        return Worker.RateLimitError();
+      },
+    });
+    if (outcome.status === 'synced')
+      log.info({ leadId: job.data.leadId, ...outcome }, 'crm synced');
+  },
+  1,
+);
+workers.push(crmWorker);
+
 // The database holds the follow-up schedule (Enrollment.nextRunAt). Rebuild the near-term
 // part of it in Redis now and periodically, in case jobs were lost (Redis restart, failed
 // enqueue). Existing jobs are left alone thanks to deterministic job ids.
@@ -164,14 +202,29 @@ async function reconcile() {
 await reconcile();
 const reconcileTimer = setInterval(() => void reconcile(), RECONCILE_EVERY_MS);
 
+// CRM sync is pull-based: find leads with events not pushed yet and queue one job per lead.
+const CRM_SWEEP_EVERY_MS = 30_000;
+async function crmSweep() {
+  try {
+    const leadIds = await findLeadsToSync(db, { syncDisqualified: crmConfig.syncDisqualified });
+    for (const leadId of leadIds) await queue.enqueueCrmSync({ leadId });
+    if (leadIds.length > 0) log.debug({ leads: leadIds.length }, 'crm sync queued');
+  } catch (err) {
+    log.error({ err }, 'crm sweep failed');
+  }
+}
+await crmSweep();
+const crmSweepTimer = setInterval(() => void crmSweep(), CRM_SWEEP_EVERY_MS);
+
 log.info(
   {
-    queues: [LEAD_CAPTURED, LEAD_QUALIFIED, SEND_MESSAGE, FOLLOW_UP_STEP],
+    queues: [LEAD_CAPTURED, LEAD_QUALIFIED, SEND_MESSAGE, FOLLOW_UP_STEP, CRM_SYNC],
     email: adapters.email?.provider,
     whatsapp: adapters.whatsapp?.provider,
     salesAlerts: Boolean(config.SALES_ALERT_EMAIL),
     followUpSequences: sequences,
     unsubscribeLinks: Boolean(baseUrl && unsubscribeSecret),
+    crm: crm.provider,
   },
   'worker started',
 );
@@ -179,6 +232,7 @@ log.info(
 async function shutdown(signal: string) {
   log.info({ signal }, 'shutting down');
   clearInterval(reconcileTimer);
+  clearInterval(crmSweepTimer);
   await Promise.all(workers.map((w) => w.close()));
   await queue.close();
   redis.disconnect();

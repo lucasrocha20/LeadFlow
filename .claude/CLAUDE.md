@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-LeadFlow automates lead follow-up: capture → qualification → immediate contact → scheduled follow-up → CRM update. The design and phased roadmap are in `.claude/PLAN.md`. Read it before starting a new phase, and mark phases done there when they're complete. Phases 0–4 are done: scaffolding, capture, qualification, first contact, and follow-up/replies.
+LeadFlow automates lead follow-up: capture → qualification → immediate contact → scheduled follow-up → CRM update. The design and phased roadmap are in `.claude/PLAN.md`. Read it before starting a new phase, and mark phases done there when they're complete. Phases 0–5 are done: scaffolding, capture, qualification, first contact, follow-up/replies, and CRM sync (HubSpot).
 
 Stack: TypeScript (ESM, NodeNext) on Node ≥20, Fastify 5, PostgreSQL via Prisma 7, Redis + BullMQ (via ioredis), Zod 4, Vitest, npm.
 
@@ -15,6 +15,7 @@ docker compose up -d --wait        # Postgres + Redis (host ports from POSTGRES_
 npm run db:migrate                 # prisma migrate dev (create/apply migrations)
 npm run db:generate                # regenerate Prisma client (also runs on postinstall)
 npm run db:seed                    # create missing default templates and follow-up sequences (the worker needs them)
+npm run crm:requeue [-- <leadId>…]  # retry dead-lettered CRM syncs (all, or the given leads)
 npm run dev                        # API: tsx watch, loads .env
 npm run dev:worker                 # background worker (consumes queues), loads .env
 npm run build && npm start         # compile to dist/ and run the API (npm run start:worker for the worker)
@@ -38,6 +39,7 @@ CI (`.github/workflows/ci.yml`) runs prisma validate, lint, format:check, typech
 - **Contact (`src/contact/`):** `planFirstContact.ts` handles `lead.qualified` and enqueues one `message.send` job per message (with a quiet-hours delay). `sendMessage.ts` handles `message.send`: it re-checks eligibility (`eligibility.ts`), renders the DB template, calls the channel's adapter, and records `message_sent` / `rep_notified` / `message_failed`. Adapters (`adapters/`) implement `MessageAdapter.send`. They throw `PermanentSendError` for failures that retrying won't fix (anything else is retried) and take `fetch` as a parameter so tests can check the requests. To add a provider, add an adapter, a `*_PROVIDER` enum value with its required credentials in `config.ts`, and a case in `createMessageAdapters`.
 - **Follow-up (`src/followup/`):** `enrollLead` runs inside the first-contact transaction in `sendMessage`. `runStep.ts` handles `followup.step`: it locks the enrollment, stops it if the lead isn't contactable, queues the step's `message.send` (kind `follow_up`), and advances `currentStep`/`nextRunAt`. Past the last step it completes the enrollment and sets `unresponsive`. `reconcileEnrollments` rebuilds step jobs from `nextRunAt`; the worker runs it at startup and every 10 minutes.
 - **Inbound (`src/inbound/`, routes in `src/routes/replies.ts` and `unsubscribe.ts`):** `ReplyAdapter` (`verify` + `parse → InboundMessage[]`) per provider. `handleInbound` records the reply, then either calls `optOutInTx` (keyword) or stops sequences, sets `engaged` and alerts the rep. `createOptOut` backs the unsubscribe link. Anything that stops contact must go through `optOutInTx`/`stopEnrollments` so the events are recorded. Queued messages rely on the send-time status check.
+- **CRM (`src/crm/`):** pull-based. `findLeadsToSync` (worker sweep every 30s) → `crm.sync` job per lead → `syncLead` pushes the contact, the stage (`config/crm.json`) and every event past the lead's `crmSyncedThrough` cursor as an activity (`activity.ts` renders the text). `runCrmSyncJob` maps `CrmRateLimitError` to BullMQ's queue-wide rate limit and `CrmPermanentError` (or the last attempt) to the dead letter. Adapters throw those error classes. New event types need a case in `describeEvent`.
 - **Idempotency pattern:** each stage writes its event with a unique `LeadEvent.dedupeKey` derived from its input (`<source>:<externalId>`, `scored:<captured event id>`, `first-contact:<lead>:<channel>`, `follow-up:<enrollment>:<step>`, `reply:<channel>:<provider message id>`), catches the unique violation for concurrent duplicates, and enqueues the next job with the event id as the job id. A retry after a failed enqueue therefore just enqueues again. Follow the same pattern in later stages.
 - **Queue (`src/queue.ts`):** the app only sees the `JobQueue` interface. BullMQ queues are created in `server.ts` on an ioredis client with `enableOfflineQueue: false`, so a request fails fast when Redis is down. Job ids come from event ids, which makes re-enqueueing idempotent. Pass `onError` to `createJobQueue`, because BullMQ prints unhandled queue errors to stderr. The worker's own connection uses `maxRetriesPerRequest: null`, as BullMQ requires.
 - **Tests:** build test apps with `testAppDeps({...})` and queues with `fakeQueue()` from `test/helpers.ts`. DB tests create their own templates/sequences with unique names and pass them in via config, so they don't depend on seeded data.
@@ -49,6 +51,7 @@ CI (`.github/workflows/ci.yml`) runs prisma validate, lint, format:check, typech
 ## Gotchas
 
 - `prisma migrate dev` refuses to run in a non-interactive shell (such as Claude's). To create a migration there, write the SQL with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script -o prisma/migrations/<timestamp>_<name>/migration.sql`, then run `npx prisma migrate deploy`.
+- `LeadEvent.createdAt` (and every `@default(now())`) is the *transaction start* time, and events written in one transaction share it. Anything that reads events incrementally must lag behind (the CRM sync uses `SYNC_LAG_MS`) and break ties by id.
 - BullMQ custom job ids can't contain `:`. Use `messageJobId()` (or similar) when deriving a job id from a dedupe key.
 - `ALTER TYPE … ADD VALUE` (a new `LeadEventType`) can't run inside a transaction together with statements that use the new value. Keep enum additions in their own migration.
 - `msgpackr-extract` (an optional native dependency of BullMQ) has an install script that is deliberately not approved. msgpackr falls back to pure JS.

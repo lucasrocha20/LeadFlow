@@ -6,6 +6,9 @@ export const LEAD_CAPTURED = 'lead.captured';
 export const LEAD_QUALIFIED = 'lead.qualified';
 export const SEND_MESSAGE = 'message.send';
 export const FOLLOW_UP_STEP = 'followup.step';
+export const CRM_SYNC = 'crm.sync';
+/** Dead-letter queue: nothing consumes it; entries are inspected and requeued. */
+export const CRM_SYNC_DEAD = 'crm.sync.dead';
 
 export interface LeadCapturedJob {
   leadId: string;
@@ -45,6 +48,16 @@ export interface FollowUpStepJob {
   runAt: number;
 }
 
+export interface CrmSyncJob {
+  leadId: string;
+}
+
+export interface CrmDeadLetter {
+  leadId: string;
+  error: string;
+  failedAt: string;
+}
+
 /** What the pipeline needs from the job queue. Tests pass an in-memory fake. */
 export interface JobQueue {
   enqueueLeadCaptured(job: LeadCapturedJob): Promise<void>;
@@ -53,6 +66,11 @@ export interface JobQueue {
   enqueueSendMessage(job: SendMessageJob, opts?: { delayMs?: number }): Promise<void>;
   /** Delayed until `job.runAt`. */
   enqueueFollowUpStep(job: FollowUpStepJob): Promise<void>;
+  /** At most one pending sync per lead; a sync picks up every event not synced yet. */
+  enqueueCrmSync(job: CrmSyncJob): Promise<void>;
+  deadLetterCrmSync(entry: CrmDeadLetter): Promise<void>;
+  /** Removes dead-letter entries (all, or for these leads). */
+  clearCrmDeadLetters(leadIds?: string[]): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -96,7 +114,22 @@ export function createJobQueue(
     connection,
     defaultJobOptions,
   });
-  const queues = [leadCaptured, leadQualified, sendMessage, followUpStep];
+  const crmSync = new Queue<CrmSyncJob>(CRM_SYNC, {
+    connection,
+    defaultJobOptions: {
+      // About 4 hours of retries (30s, 1m, 2m … 32m) before dead-lettering.
+      attempts: 8,
+      backoff: { type: 'exponential', delay: 30_000 },
+      // Free the per-lead job id right away so the next sweep can enqueue the lead again.
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  });
+  const crmDead = new Queue<CrmDeadLetter>(CRM_SYNC_DEAD, {
+    connection,
+    defaultJobOptions: { removeOnComplete: true },
+  });
+  const queues = [leadCaptured, leadQualified, sendMessage, followUpStep, crmSync, crmDead];
   for (const queue of queues) queue.on('error', onError);
 
   return {
@@ -117,6 +150,22 @@ export function createJobQueue(
         jobId: followUpJobId(job),
         delay: Math.max(0, job.runAt - Date.now()),
       });
+    },
+    async enqueueCrmSync(job) {
+      await crmSync.add(CRM_SYNC, job, { jobId: `crm-sync-${job.leadId}` });
+    },
+    async deadLetterCrmSync(entry) {
+      await crmDead.add(CRM_SYNC_DEAD, entry, {
+        jobId: `crm-dead-${entry.leadId}-${Date.parse(entry.failedAt)}`,
+      });
+    },
+    async clearCrmDeadLetters(leadIds) {
+      const entries = await crmDead.getJobs(['wait', 'delayed']);
+      await Promise.all(
+        entries
+          .filter((job) => !leadIds || leadIds.includes(job.data.leadId))
+          .map((job) => job.remove()),
+      );
     },
     async close() {
       await Promise.all(queues.map((q) => q.close()));

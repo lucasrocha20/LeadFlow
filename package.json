@@ -26,6 +26,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "crm:requeue": "tsx --env-file-if-exists=.env scripts/crm-requeue.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

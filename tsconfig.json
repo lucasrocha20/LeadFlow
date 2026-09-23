@@ -18,5 +18,5 @@
     "sourceMap": true,
     "noEmit": true
   },
-  "include": ["src", "test", "prisma/seed.ts", "prisma.config.ts", "vitest.config.ts"]
+  "include": ["src", "test", "scripts", "prisma/seed.ts", "prisma.config.ts", "vitest.config.ts"]
 }
