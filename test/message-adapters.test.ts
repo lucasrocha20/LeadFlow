@@ -61,6 +61,20 @@ describe('resendAdapter', () => {
     });
   });
 
+  it('adds List-Unsubscribe headers when the message has an unsubscribe link', async () => {
+    const fetchMock = fakeFetch(200, { id: 'x' });
+    await resendAdapter({ apiKey: 'key', from: 's@acme.com', fetch: fetchMock }).send({
+      to: 'ana@example.com',
+      template: emailTemplate,
+      vars: { ...vars, unsubscribeUrl: 'https://leads.example.com/unsubscribe?lead=1&token=t' },
+      idempotencyKey: 'k',
+    });
+    expect(requestOf(fetchMock).body.headers).toEqual({
+      'List-Unsubscribe': '<https://leads.example.com/unsubscribe?lead=1&token=t>',
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    });
+  });
+
   it('treats 429 and 5xx as retryable and other errors as permanent', async () => {
     for (const status of [429, 500, 503]) {
       const err = await send(fakeFetch(status, {})).catch((e: unknown) => e);

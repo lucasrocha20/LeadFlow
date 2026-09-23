@@ -5,6 +5,7 @@ import type { Channel, LeadTier } from './generated/prisma/client.js';
 export const LEAD_CAPTURED = 'lead.captured';
 export const LEAD_QUALIFIED = 'lead.qualified';
 export const SEND_MESSAGE = 'message.send';
+export const FOLLOW_UP_STEP = 'followup.step';
 
 export interface LeadCapturedJob {
   leadId: string;
@@ -22,7 +23,7 @@ export interface LeadQualifiedJob {
 
 export interface SendMessageJob {
   leadId: string;
-  kind: 'first_contact' | 'rep_alert';
+  kind: 'first_contact' | 'follow_up' | 'rep_alert';
   channel: Channel;
   /** Template name. */
   template: string;
@@ -30,6 +31,18 @@ export interface SendMessageJob {
   to?: string;
   /** Identifies the logical message; the `message_sent` event and the job id derive from it. */
   dedupeKey: string;
+  /** Follow-ups only: the message is dropped if this enrollment is no longer active. */
+  enrollmentId?: string;
+  /** Extra template variables, e.g. the reply text in a rep alert. */
+  vars?: Record<string, string>;
+}
+
+export interface FollowUpStepJob {
+  enrollmentId: string;
+  /** `SequenceStep.order` this job runs (past the last step: the completion check). */
+  step: number;
+  /** `Enrollment.nextRunAt` it was scheduled for, in ms. */
+  runAt: number;
 }
 
 /** What the pipeline needs from the job queue. Tests pass an in-memory fake. */
@@ -38,6 +51,8 @@ export interface JobQueue {
   enqueueLeadQualified(job: LeadQualifiedJob): Promise<void>;
   /** `delayMs` postpones the send, e.g. until quiet hours end. */
   enqueueSendMessage(job: SendMessageJob, opts?: { delayMs?: number }): Promise<void>;
+  /** Delayed until `job.runAt`. */
+  enqueueFollowUpStep(job: FollowUpStepJob): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -59,6 +74,10 @@ const sendMessageJobOptions: DefaultJobOptions = {
 /** BullMQ job ids can't contain ':'. */
 export const messageJobId = (dedupeKey: string) => dedupeKey.replaceAll(':', '_');
 
+// A rescheduled step gets a new id, so an old completed job never blocks it.
+export const followUpJobId = (job: FollowUpStepJob) =>
+  `followup-${job.enrollmentId}-${job.step}-${job.runAt}`;
+
 export function createJobQueue(
   connection: Redis,
   /** Connection errors; without a listener BullMQ prints them to stderr. */
@@ -73,7 +92,12 @@ export function createJobQueue(
     connection,
     defaultJobOptions: sendMessageJobOptions,
   });
-  for (const queue of [leadCaptured, leadQualified, sendMessage]) queue.on('error', onError);
+  const followUpStep = new Queue<FollowUpStepJob>(FOLLOW_UP_STEP, {
+    connection,
+    defaultJobOptions,
+  });
+  const queues = [leadCaptured, leadQualified, sendMessage, followUpStep];
+  for (const queue of queues) queue.on('error', onError);
 
   return {
     async enqueueLeadCaptured(job) {
@@ -88,8 +112,14 @@ export function createJobQueue(
         delay: opts?.delayMs,
       });
     },
+    async enqueueFollowUpStep(job) {
+      await followUpStep.add(FOLLOW_UP_STEP, job, {
+        jobId: followUpJobId(job),
+        delay: Math.max(0, job.runAt - Date.now()),
+      });
+    },
     async close() {
-      await Promise.all([leadCaptured.close(), leadQualified.close(), sendMessage.close()]);
+      await Promise.all(queues.map((q) => q.close()));
     },
   };
 }

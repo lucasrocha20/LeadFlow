@@ -48,4 +48,18 @@ describe('loadConfig', () => {
       /MESSAGING_PROVIDER/,
     );
   });
+
+  it('requires PUBLIC_BASE_URL and UNSUBSCRIBE_SECRET together', () => {
+    expect(() => loadConfig({ ...validEnv, PUBLIC_BASE_URL: 'https://leads.example.com' })).toThrow(
+      /UNSUBSCRIBE_SECRET/,
+    );
+    expect(() => loadConfig({ ...validEnv, UNSUBSCRIBE_SECRET: 's' })).toThrow(/PUBLIC_BASE_URL/);
+    expect(
+      loadConfig({
+        ...validEnv,
+        PUBLIC_BASE_URL: 'https://leads.example.com',
+        UNSUBSCRIBE_SECRET: 's',
+      }).PUBLIC_BASE_URL,
+    ).toBe('https://leads.example.com');
+  });
 });

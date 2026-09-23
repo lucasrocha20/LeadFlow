@@ -15,6 +15,8 @@ const tierPlan = z.strictObject({
     }),
   /** Email template sent to SALES_ALERT_EMAIL. */
   repAlertTemplate: z.string().min(1).optional(),
+  /** `Sequence.name` the lead is enrolled in after its first contact; none when unset. */
+  followUpSequence: z.string().min(1).optional(),
 });
 
 const contactConfigSchema = z.strictObject({
@@ -34,6 +36,15 @@ const contactConfigSchema = z.strictObject({
     .refine((q) => q.start !== q.end, { message: 'start and end must differ' }),
   /** First contact per tier. */
   tiers: z.strictObject({ hot: tierPlan, warm: tierPlan, cold: tierPlan }),
+  replies: z.strictObject({
+    /**
+     * A reply whose first line (or email subject) is exactly one of these, ignoring case,
+     * accents and punctuation, opts the lead out of everything.
+     */
+    optOutKeywords: z.array(z.string().min(1)).min(1),
+    /** Email template sent to SALES_ALERT_EMAIL when a lead replies. */
+    repAlertTemplate: z.string().min(1).optional(),
+  }),
 });
 
 export type ContactConfig = z.infer<typeof contactConfigSchema>;
@@ -65,5 +76,17 @@ export function referencedTemplates(config: ContactConfig): Map<string, Channel>
     for (const { channel, template } of tier.messages) templates.set(template, channel);
     if (tier.repAlertTemplate) templates.set(tier.repAlertTemplate, 'email');
   }
+  if (config.replies.repAlertTemplate) templates.set(config.replies.repAlertTemplate, 'email');
   return templates;
+}
+
+/** Follow-up sequence name per tier. */
+export function followUpSequences(
+  config: ContactConfig,
+): Partial<Record<'hot' | 'warm' | 'cold', string>> {
+  return Object.fromEntries(
+    Object.entries(config.tiers).flatMap(([tier, plan]) =>
+      plan.followUpSequence ? [[tier, plan.followUpSequence]] : [],
+    ),
+  );
 }

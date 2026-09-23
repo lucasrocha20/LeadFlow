@@ -2,12 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { ZodError, z } from 'zod';
 import type { CaptureLead } from '../capture/captureLead.js';
 import type { FormAdapter } from '../capture/types.js';
-
-declare module 'fastify' {
-  interface FastifyRequest {
-    rawBody?: Buffer;
-  }
-}
+import { keepRawJsonBody } from './rawJson.js';
 
 interface WebhookRoutesOptions {
   formAdapters: Record<string, FormAdapter>;
@@ -18,18 +13,7 @@ export const webhookRoutes: FastifyPluginAsync<WebhookRoutesOptions> = async (
   app,
   { formAdapters, captureLead },
 ) => {
-  // Signatures are computed over the exact bytes received, so keep the raw body around.
-  // Scoped to this plugin: other routes keep Fastify's default JSON parser.
-  app.removeContentTypeParser('application/json');
-  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    const raw = body as Buffer;
-    request.rawBody = raw;
-    try {
-      done(null, raw.length > 0 ? JSON.parse(raw.toString('utf8')) : undefined);
-    } catch {
-      done(Object.assign(new Error('Invalid JSON body'), { statusCode: 400 }), undefined);
-    }
-  });
+  keepRawJsonBody(app);
 
   app.post('/webhooks/forms/:provider', async (request, reply) => {
     const { provider } = request.params as { provider: string };

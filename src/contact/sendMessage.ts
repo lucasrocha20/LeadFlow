@@ -1,13 +1,22 @@
 import { UnrecoverableError, type Job } from 'bullmq';
 import { asJson, isUniqueViolation, type Db } from '../db.js';
-import type { SendMessageJob } from '../queue.js';
+import { enrollLead } from '../followup/enrollment.js';
+import type { LeadTier } from '../generated/prisma/client.js';
+import type { FollowUpStepJob, JobQueue, SendMessageJob } from '../queue.js';
 import type { MessageAdapters } from './adapters/index.js';
 import { PermanentSendError } from './adapters/types.js';
 import { channelAddress, ineligibleReason } from './eligibility.js';
 import { leadTemplateVars } from './templates.js';
 
 export type SendOutcome =
-  | { status: 'sent'; eventId: string; externalId: string; provider: string }
+  | {
+      status: 'sent';
+      eventId: string;
+      externalId: string;
+      provider: string;
+      /** Set when this first contact enrolled the lead in a follow-up sequence. */
+      enrolled?: FollowUpStepJob;
+    }
   | { status: 'skipped'; reason: string }
   | { status: 'duplicate' };
 
@@ -20,14 +29,25 @@ export type SendMessage = (
  * Handles `message.send`: re-checks eligibility (things may have changed while the job waited
  * out quiet hours), renders and sends the template, and records `message_sent` (or
  * `rep_notified`). A failure is recorded as `message_failed` once it's permanent or on the
- * last attempt, then rethrown so BullMQ retries or gives up.
+ * last attempt, then rethrown so BullMQ retries or gives up. The first successful first
+ * contact moves the lead to `contacted` and enrolls it in its tier's follow-up sequence.
  */
 export function createSendMessage({
   db,
   adapters,
+  queue,
+  followUpSequences = {},
+  unsubscribeUrl,
+  now = () => new Date(),
 }: {
   db: Db;
   adapters: MessageAdapters;
+  queue: Pick<JobQueue, 'enqueueFollowUpStep'>;
+  /** Sequence name per tier, from the contact config. */
+  followUpSequences?: Partial<Record<LeadTier, string>>;
+  /** Builds the lead's `{{unsubscribeUrl}}`; unset when unsubscribe links aren't configured. */
+  unsubscribeUrl?: (leadId: string) => string;
+  now?: () => Date;
 }): SendMessage {
   async function recordFailure(job: SendMessageJob, err: unknown) {
     try {
@@ -58,11 +78,24 @@ export function createSendMessage({
     if (!lead) return { status: 'skipped', reason: 'lead not found' };
 
     let to: string | null | undefined = job.to;
-    if (job.kind === 'first_contact') {
+    if (job.kind !== 'rep_alert') {
       const reason = ineligibleReason(lead, job.channel);
       if (reason) return { status: 'skipped', reason };
       to = channelAddress(lead, job.channel);
     }
+    if (job.kind === 'follow_up') {
+      const enrollment = job.enrollmentId
+        ? await db.enrollment.findUnique({ where: { id: job.enrollmentId } })
+        : null;
+      if (enrollment?.status !== 'active') {
+        return { status: 'skipped', reason: `enrollment is ${enrollment?.status ?? 'missing'}` };
+      }
+    }
+
+    const vars = { ...leadTemplateVars(lead), ...job.vars };
+    // Rep alerts go to our own team: never hand them the lead's unsubscribe link.
+    if (unsubscribeUrl && job.kind !== 'rep_alert')
+      vars['unsubscribeUrl'] = unsubscribeUrl(lead.id);
 
     let sent: { externalId: string; provider: string };
     try {
@@ -79,7 +112,7 @@ export function createSendMessage({
       const { externalId } = await adapter.send({
         to,
         template,
-        vars: leadTemplateVars(lead),
+        vars,
         idempotencyKey: job.dedupeKey,
       });
       sent = { externalId, provider: adapter.provider };
@@ -88,30 +121,49 @@ export function createSendMessage({
       throw err;
     }
 
+    let result: { eventId: string; enrolled: FollowUpStepJob | null };
     try {
-      const event = await db.$transaction(async (tx) => {
+      result = await db.$transaction(async (tx) => {
+        let enrolled: FollowUpStepJob | null = null;
         if (job.kind === 'first_contact') {
-          await tx.lead.updateMany({
+          // Only one transaction can make this transition, so the lead is enrolled once.
+          const { count } = await tx.lead.updateMany({
             where: { id: lead.id, status: 'qualified' },
             data: { status: 'contacted' },
           });
+          if (count === 1) enrolled = await enrollLead(tx, lead, followUpSequences, now());
         }
-        return tx.leadEvent.create({
+        const event = await tx.leadEvent.create({
           data: {
             leadId: lead.id,
             type: job.kind === 'rep_alert' ? 'rep_notified' : 'message_sent',
             channel: job.channel,
             dedupeKey: job.dedupeKey,
-            payload: asJson({ kind: job.kind, template: job.template, to, ...sent }),
+            payload: asJson({
+              kind: job.kind,
+              template: job.template,
+              to,
+              ...sent,
+              ...(job.enrollmentId && { enrollmentId: job.enrollmentId }),
+            }),
           },
         });
+        return { eventId: event.id, enrolled };
       });
-      return { status: 'sent', eventId: event.id, ...sent };
     } catch (err) {
       // Another run of the same message recorded it first.
       if (isUniqueViolation(err)) return { status: 'duplicate' };
       throw err;
     }
+
+    // If this fails, the enrollment's nextRunAt is saved and the reconcile sweep queues it.
+    if (result.enrolled) await queue.enqueueFollowUpStep(result.enrolled);
+    return {
+      status: 'sent',
+      eventId: result.eventId,
+      ...sent,
+      ...(result.enrolled && { enrolled: result.enrolled }),
+    };
   };
 }
 

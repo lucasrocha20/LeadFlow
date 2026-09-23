@@ -29,6 +29,13 @@ export function resendAdapter(opts: {
           to: [to],
           subject: renderTemplate(template.subject, vars),
           text: renderTemplate(template.body, vars),
+          // Lets mail clients show their own unsubscribe button (RFC 2369 / 8058 one-click).
+          ...(vars['unsubscribeUrl'] && {
+            headers: {
+              'List-Unsubscribe': `<${vars['unsubscribeUrl']}>`,
+              'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            },
+          }),
         }),
         signal: AbortSignal.timeout(15_000),
       });

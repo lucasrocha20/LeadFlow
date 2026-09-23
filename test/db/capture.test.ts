@@ -10,7 +10,7 @@ import { createCaptureLead } from '../../src/capture/captureLead.js';
 import type { LeadInput } from '../../src/capture/types.js';
 import { createDb } from '../../src/db.js';
 import { LEAD_CAPTURED, createJobQueue, type JobQueue } from '../../src/queue.js';
-import { fakeQueue } from '../helpers.js';
+import { fakeQueue, testAppDeps } from '../helpers.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
 const redisUrl = process.env['REDIS_URL'];
@@ -195,16 +195,16 @@ describe.skipIf(!databaseUrl)('captureLead (database)', () => {
       const redis = new Redis(redisUrl!, { maxRetriesPerRequest: null });
       const queue = createJobQueue(redis);
       const inspect = new Queue(LEAD_CAPTURED, { connection: redis });
-      const app = await buildApp({
-        config: { NODE_ENV: 'test', LOG_LEVEL: 'silent' },
-        readinessChecks: {},
-        formAdapters: createFormAdapters({
-          DEFAULT_PHONE_COUNTRY: 'BR',
-          FORM_WEBHOOK_SECRET: 'e2e-secret',
-          TYPEFORM_WEBHOOK_SECRET: undefined,
+      const app = await buildApp(
+        testAppDeps({
+          formAdapters: createFormAdapters({
+            DEFAULT_PHONE_COUNTRY: 'BR',
+            FORM_WEBHOOK_SECRET: 'e2e-secret',
+            TYPEFORM_WEBHOOK_SECRET: undefined,
+          }),
+          captureLead: createCaptureLead(db, queue),
         }),
-        captureLead: createCaptureLead(db, queue),
-      });
+      );
 
       try {
         const email = `lead-${randomUUID()}@example.com`;

@@ -36,11 +36,22 @@ const baseSchema = z.object({
   MESSAGING_PROVIDER: z.enum(['dry-run', 'whatsapp']).default('dry-run'),
   WHATSAPP_ACCESS_TOKEN: optionalSecret,
   WHATSAPP_PHONE_NUMBER_ID: optionalSecret,
+  // Inbound WhatsApp webhook: the App Secret verifies X-Hub-Signature-256, the verify token
+  // answers Meta's subscription check. Replies are only accepted when the App Secret is set.
+  WHATSAPP_APP_SECRET: optionalSecret,
+  WHATSAPP_WEBHOOK_VERIFY_TOKEN: optionalSecret,
 
   EMAIL_PROVIDER: z.enum(['dry-run', 'resend']).default('dry-run'),
   // Sender address, e.g. "Acme Sales <sales@acme.com>".
   EMAIL_FROM: optionalSecret,
   RESEND_API_KEY: optionalSecret,
+
+  // Inbound email replies, relayed as JSON with this secret in X-Webhook-Secret.
+  REPLY_WEBHOOK_SECRET: optionalSecret,
+
+  // Unsubscribe links (`{{unsubscribeUrl}}` in templates) need both.
+  PUBLIC_BASE_URL: z.preprocess(emptyAsUndefined, z.url({ protocol: /^https?$/ }).optional()),
+  UNSUBSCRIBE_SECRET: optionalSecret,
 });
 
 // Credentials are only required for the provider actually selected.
@@ -54,6 +65,13 @@ const requiredFor: [
 ];
 
 const configSchema = baseSchema.superRefine((config, ctx) => {
+  if (Boolean(config.PUBLIC_BASE_URL) !== Boolean(config.UNSUBSCRIBE_SECRET)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: [config.PUBLIC_BASE_URL ? 'UNSUBSCRIBE_SECRET' : 'PUBLIC_BASE_URL'],
+      message: 'PUBLIC_BASE_URL and UNSUBSCRIBE_SECRET must be set together',
+    });
+  }
   for (const [selector, value, keys] of requiredFor) {
     if (config[selector] !== value) continue;
     for (const key of keys) {

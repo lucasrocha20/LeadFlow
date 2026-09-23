@@ -101,25 +101,27 @@ model LeadEvent {
 }
 
 model Sequence {
-  id          String         @id @default(uuid())
-  name        String         @unique
-  tier        LeadTier
-  active      Boolean        @default(true)
-  steps       SequenceStep[]
-  enrollments Enrollment[]
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id               String         @id @default(uuid())
+  name             String         @unique
+  tier             LeadTier
+  active           Boolean        @default(true)
+  // After the last step, how long to wait for a reply before marking the lead unresponsive.
+  finalWaitMinutes Int            @default(4320)
+  steps            SequenceStep[]
+  enrollments      Enrollment[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 }
 
 model SequenceStep {
-  id           String   @id @default(uuid())
-  sequenceId   String
-  sequence     Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
-  order        Int
-  delayMinutes Int // delay after the previous step (or after enrollment for the first step)
-  channel      Channel
-  templateId   String
-  template     Template @relation(fields: [templateId], references: [id])
+  id            String   @id @default(uuid())
+  sequenceId    String
+  sequence      Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  order         Int
+  offsetMinutes Int // when the step runs, in minutes after enrollment (the first contact)
+  channel       Channel
+  templateId    String
+  template      Template @relation(fields: [templateId], references: [id])
 
   @@unique([sequenceId, order])
 }
@@ -130,8 +132,10 @@ model Enrollment {
   lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
   sequenceId  String
   sequence    Sequence         @relation(fields: [sequenceId], references: [id])
+  // `order` of the next step to run; past the last step while waiting to complete.
   currentStep Int              @default(0)
   status      EnrollmentStatus @default(active)
+  // When the next step (or the completion check) is due; the source of truth for the schedule.
   nextRunAt   DateTime?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt

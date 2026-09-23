@@ -4,8 +4,8 @@ import { buildApp } from '../src/app.js';
 import { createFormAdapters } from '../src/capture/adapters/index.js';
 import { typeformSignature } from '../src/capture/adapters/typeform.js';
 import type { CaptureLead } from '../src/capture/captureLead.js';
+import { testAppDeps } from './helpers.js';
 
-const config = { NODE_ENV: 'test', LOG_LEVEL: 'silent' } as const;
 const formAdapters = createFormAdapters({
   DEFAULT_PHONE_COUNTRY: 'BR',
   FORM_WEBHOOK_SECRET: 'web-secret',
@@ -16,7 +16,7 @@ const typeformBody = readFileSync(new URL('./fixtures/typeform.json', import.met
 let app: Awaited<ReturnType<typeof buildApp>> | undefined;
 
 async function makeApp(captureLead: CaptureLead) {
-  app = await buildApp({ config, readinessChecks: {}, formAdapters, captureLead });
+  app = await buildApp(testAppDeps({ formAdapters, captureLead }));
   return app;
 }
 

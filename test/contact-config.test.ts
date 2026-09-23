@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  followUpSequences,
   loadContactConfig,
   parseContactConfig,
   referencedTemplates,
@@ -20,6 +21,7 @@ const valid = {
     warm: { messages: [{ channel: 'email', template: 'mail' }] },
     cold: { messages: [] },
   },
+  replies: { optOutKeywords: ['STOP'], repAlertTemplate: 'reply-alert' },
 };
 
 describe('contact config', () => {
@@ -30,11 +32,20 @@ describe('contact config', () => {
     expect(config.tiers.hot.repAlertTemplate).toBeDefined();
   });
 
+  it('maps tiers to their follow-up sequences', () => {
+    expect(followUpSequences(loadContactConfig('config/contact.json'))).toEqual({
+      hot: 'hot_follow_up',
+      warm: 'warm_follow_up',
+      cold: 'cold_follow_up',
+    });
+  });
+
   it('lists every referenced template with its channel', () => {
     expect([...referencedTemplates(parseContactConfig(valid))]).toEqual([
       ['wa', 'whatsapp'],
       ['alert', 'email'],
       ['mail', 'email'],
+      ['reply-alert', 'email'],
     ]);
   });
 

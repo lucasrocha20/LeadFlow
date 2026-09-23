@@ -1,8 +1,12 @@
 import Fastify from 'fastify';
 import type { CaptureLead } from './capture/captureLead.js';
 import type { FormAdapter } from './capture/types.js';
+import type { HandleInbound } from './inbound/handleInbound.js';
+import type { ReplyAdapter } from './inbound/types.js';
 import { loggerOptions, type LoggerConfig } from './logger.js';
 import { healthRoutes, type ReadinessCheck } from './routes/health.js';
+import { replyRoutes } from './routes/replies.js';
+import { unsubscribeRoutes, type UnsubscribeDeps } from './routes/unsubscribe.js';
 import { webhookRoutes } from './routes/webhooks.js';
 
 export interface AppDeps {
@@ -10,6 +14,11 @@ export interface AppDeps {
   readinessChecks: Record<string, ReadinessCheck>;
   formAdapters: Record<string, FormAdapter>;
   captureLead: CaptureLead;
+  replyAdapters: Record<string, ReplyAdapter>;
+  handleInbound: HandleInbound;
+  whatsappVerifyToken?: string;
+  /** Unsubscribe pages are only served when configured. */
+  unsubscribe?: UnsubscribeDeps;
 }
 
 export async function buildApp(deps: AppDeps) {
@@ -20,6 +29,14 @@ export async function buildApp(deps: AppDeps) {
     formAdapters: deps.formAdapters,
     captureLead: deps.captureLead,
   });
+  await app.register(replyRoutes, {
+    replyAdapters: deps.replyAdapters,
+    handleInbound: deps.handleInbound,
+    whatsappVerifyToken: deps.whatsappVerifyToken,
+  });
+  if (deps.unsubscribe) {
+    await app.register(unsubscribeRoutes, { unsubscribe: deps.unsubscribe });
+  }
 
   return app;
 }

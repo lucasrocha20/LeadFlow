@@ -158,7 +158,7 @@ Implementation notes:
 - Retries: 6 attempts with exponential backoff (5s…80s). 429/5xx/network errors are retried. Other 4xx errors, a missing template and missing variables are permanent (BullMQ `UnrecoverableError`). `message_failed` is recorded once, when the failure is permanent or on the last attempt. The first successful lead message moves `qualified` → `contacted`.
 - Known gap: if the process dies after the provider accepted a message but before the event is written, the retry sends it again. Resend dedupes this with the `Idempotency-Key`; WhatsApp has no equivalent.
 
-### Phase 4 — Scheduled follow-up
+### Phase 4 — Scheduled follow-up ✅ (done 2026-09-23; re-engagement sequence not done)
 
 1. Sequence definitions per tier (e.g. hot: +1h, +1d, +3d; warm: +1d, +3d, +7d; cold: +3d, +7d, +14d).
 2. Enroll the lead after first contact. Each step is a BullMQ delayed job, and `Enrollment.nextRunAt` is saved so the schedule survives a restart.
@@ -167,6 +167,15 @@ Implementation notes:
 5. When the sequence ends with no reply → status `unresponsive`, with an optional long-term re-engagement sequence.
 
 **Done when:** a lead that never replies gets all steps on time, and a lead that replies gets nothing further.
+
+Implementation notes:
+
+- Sequences live in the database (`npm run db:seed` creates `hot_follow_up`, `warm_follow_up` and `cold_follow_up` with the plan's timings). `config/contact.json` names each tier's sequence (`followUpSequence`). `SequenceStep.offsetMinutes` counts from enrollment. `Sequence.finalWaitMinutes` is how long to wait after the last step before marking the lead `unresponsive`.
+- Enrollment happens in the same transaction as the first successful first contact (the `qualified` → `contacted` transition), so a lead is enrolled once. Each step is a `followup.step` delayed job (id = enrollment + step + due time). It queues the step's message through `message.send` (quiet hours apply, and consent/status are re-checked at send time) and schedules the next step. After downtime, the planned gap between steps is kept instead of sending overdue steps back to back.
+- `Enrollment.nextRunAt` is the source of truth. The worker re-enqueues due-soon steps at startup and every 10 minutes, so lost Redis jobs are rebuilt (verified by wiping Redis).
+- Replies: `POST /webhooks/replies/whatsapp` (Meta signature `X-Hub-Signature-256` using `WHATSAPP_APP_SECRET`; `GET` answers the verify-token handshake) and `POST /webhooks/replies/email` (generic JSON `{from, subject?, text?, messageId?}` + `X-Webhook-Secret`, for whichever inbound-mail service relays it). A reply is matched to the oldest lead with that phone/email. It records `reply_received`, stops sequences, sets `engaged` and alerts the rep once (`rep_alert_reply`). Idempotent per provider message id.
+- Opt-outs: a reply whose first line or subject is exactly a keyword from `contact.json` (`STOP`, `SAIR`, …, ignoring case, accents and punctuation), or the unsubscribe link, sets `do_not_contact`, records `opted_out` and stops sequences. Queued messages are dropped at send time. Links are `/unsubscribe?lead=…&token=<HMAC>` (`PUBLIC_BASE_URL` + `UNSUBSCRIBE_SECRET`, template var `{{unsubscribeUrl}}`). GET shows a confirmation button and POST unsubscribes, which also serves RFC 8058 one-click. Resend emails get `List-Unsubscribe` headers. Rep alerts never get the link.
+- Not done / known limits: the optional long-term re-engagement sequence. A lead re-qualified to a higher tier stays in its original sequence. An `unresponsive` lead that submits a form again is re-scored but not contacted again. WhatsApp delivery statuses are ignored. Email replies need a relay into the generic format (no provider-specific inbound adapter yet).
 
 ### Phase 5 — CRM update
 

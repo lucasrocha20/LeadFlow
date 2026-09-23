@@ -30,7 +30,7 @@ import {
   type LeadQualifiedJob,
   type SendMessageJob,
 } from '../../src/queue.js';
-import { fakeQueue } from '../helpers.js';
+import { fakeQueue, testAppDeps } from '../helpers.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
 const redisUrl = process.env['REDIS_URL'];
@@ -67,6 +67,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
       warm: { messages: [{ channel: 'email', template: names.email }] },
       cold: { messages: [{ channel: 'email', template: names.email }] },
     },
+    replies: { optOutKeywords: ['STOP'] },
   });
 
   beforeAll(async () => {
@@ -284,7 +285,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
       const lead = await createLead();
       const a = adapters();
       a.email.send.mockResolvedValue({ externalId: 'provider-1' });
-      const send = createSendMessage({ db, adapters: a });
+      const send = createSendMessage({ db, adapters: a, queue: fakeQueue() });
 
       const outcome = await send(job(lead.id), { final: false });
 
@@ -320,7 +321,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
     it('records a rep alert as rep_notified without changing the lead status', async () => {
       const lead = await createLead();
       const a = adapters();
-      const send = createSendMessage({ db, adapters: a });
+      const send = createSendMessage({ db, adapters: a, queue: fakeQueue() });
 
       await send(
         job(lead.id, {
@@ -344,7 +345,10 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
       await db.lead.update({ where: { id: lead.id }, data: { status: 'do_not_contact' } });
       const a = adapters();
 
-      const outcome = await createSendMessage({ db, adapters: a })(job(lead.id), { final: false });
+      const outcome = await createSendMessage({ db, adapters: a, queue: fakeQueue() })(
+        job(lead.id),
+        { final: false },
+      );
 
       expect(outcome).toEqual({ status: 'skipped', reason: 'status is do_not_contact' });
       expect(a.email.send).not.toHaveBeenCalled();
@@ -355,7 +359,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
       const lead = await createLead();
       const a = adapters();
       a.email.send.mockRejectedValue(new Error('resend responded 503'));
-      const send = createSendMessage({ db, adapters: a });
+      const send = createSendMessage({ db, adapters: a, queue: fakeQueue() });
 
       await expect(send(job(lead.id), { final: false })).rejects.toThrow('503');
       expect(await events(lead.id)).toEqual([]);
@@ -376,7 +380,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
 
     it('records a permanent failure right away', async () => {
       const lead = await createLead();
-      const send = createSendMessage({ db, adapters: adapters() });
+      const send = createSendMessage({ db, adapters: adapters(), queue: fakeQueue() });
 
       await expect(
         send(job(lead.id, { template: 'no_such_template' }), { final: false }),
@@ -388,7 +392,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
 
     it('turns permanent failures into unrecoverable job errors', async () => {
       const lead = await createLead();
-      const send = createSendMessage({ db, adapters: adapters() });
+      const send = createSendMessage({ db, adapters: adapters(), queue: fakeQueue() });
       const err = await runSendMessageJob(send, {
         data: job(lead.id, { template: 'no_such_template' }),
         attemptsMade: 0,
@@ -413,7 +417,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
         salesAlertEmail: 'sales@example.com',
         now: noonInSaoPaulo,
       });
-      const send = createSendMessage({ db, adapters: a });
+      const send = createSendMessage({ db, adapters: a, queue: fakeQueue() });
       const workers = [
         new Worker<LeadCapturedJob>(LEAD_CAPTURED, (job) => qualify(job.data), {
           connection: workerConnection,
@@ -425,16 +429,16 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
           connection: workerConnection,
         }),
       ];
-      const app = await buildApp({
-        config: { NODE_ENV: 'test', LOG_LEVEL: 'silent' },
-        readinessChecks: {},
-        formAdapters: createFormAdapters({
-          DEFAULT_PHONE_COUNTRY: 'BR',
-          FORM_WEBHOOK_SECRET: 'e2e-secret',
-          TYPEFORM_WEBHOOK_SECRET: undefined,
+      const app = await buildApp(
+        testAppDeps({
+          formAdapters: createFormAdapters({
+            DEFAULT_PHONE_COUNTRY: 'BR',
+            FORM_WEBHOOK_SECRET: 'e2e-secret',
+            TYPEFORM_WEBHOOK_SECRET: undefined,
+          }),
+          captureLead: createCaptureLead(db, queue),
         }),
-        captureLead: createCaptureLead(db, queue),
-      });
+      );
 
       try {
         const started = Date.now();
@@ -510,7 +514,7 @@ describe.skipIf(!databaseUrl)('first contact (database)', () => {
         );
         throw new Error('resend responded 503');
       });
-      const send = createSendMessage({ db, adapters: a });
+      const send = createSendMessage({ db, adapters: a, queue: fakeQueue() });
       const worker = new Worker<SendMessageJob>(
         SEND_MESSAGE,
         (job) => runSendMessageJob(send, job),

@@ -1,18 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import type { ReadinessCheck } from '../src/routes/health.js';
-
-const config = { NODE_ENV: 'test', LOG_LEVEL: 'silent' } as const;
+import { testAppDeps } from './helpers.js';
 
 let app: Awaited<ReturnType<typeof buildApp>> | undefined;
 
 async function makeApp(readinessChecks: Record<string, ReadinessCheck>) {
-  app = await buildApp({
-    config,
-    readinessChecks,
-    formAdapters: {},
-    captureLead: () => Promise.reject(new Error('not used')),
-  });
+  app = await buildApp(testAppDeps({ readinessChecks }));
   return app;
 }
 
