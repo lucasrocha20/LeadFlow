@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LeadTier {
+  hot
+  warm
+  cold
+  disqualified
+}
+
+enum LeadStatus {
+  new
+  contacted
+  engaged
+  qualified
+  disqualified
+  converted
+  unresponsive
+  do_not_contact
+}
+
+enum Channel {
+  email
+  whatsapp
+  sms
+}
+
+enum LeadEventType {
+  captured
+  scored
+  message_sent
+  message_failed
+  reply_received
+  opted_out
+  enrolled
+  sequence_stopped
+  sequence_completed
+  status_changed
+  crm_synced
+  crm_sync_failed
+}
+
+enum EnrollmentStatus {
+  active
+  stopped
+  completed
+}
+
+model Lead {
+  id         String     @id @default(uuid())
+  firstName  String?
+  lastName   String?
+  email      String?
+  phone      String? // E.164
+  company    String?
+  source     String // e.g. "website", "typeform"
+  utm        Json?
+  rawPayload Json
+  score      Int?
+  tier       LeadTier?
+  status     LeadStatus @default(new)
+  crmId      String?
+  timezone   String?
+
+  consentEmail     Boolean @default(false)
+  consentMessaging Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events      LeadEvent[]
+  enrollments Enrollment[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([status])
+}
+
+// Append-only audit trail; also the source for CRM activity sync.
+model LeadEvent {
+  id        String        @id @default(uuid())
+  leadId    String
+  lead      Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type      LeadEventType
+  channel   Channel?
+  payload   Json?
+  createdAt DateTime      @default(now())
+
+  @@index([leadId, createdAt])
+  @@index([type, createdAt])
+}
+
+model Sequence {
+  id          String         @id @default(uuid())
+  name        String         @unique
+  tier        LeadTier
+  active      Boolean        @default(true)
+  steps       SequenceStep[]
+  enrollments Enrollment[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model SequenceStep {
+  id           String   @id @default(uuid())
+  sequenceId   String
+  sequence     Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  order        Int
+  delayMinutes Int // delay after the previous step (or after enrollment for the first step)
+  channel      Channel
+  templateId   String
+  template     Template @relation(fields: [templateId], references: [id])
+
+  @@unique([sequenceId, order])
+}
+
+model Enrollment {
+  id          String           @id @default(uuid())
+  leadId      String
+  lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  sequenceId  String
+  sequence    Sequence         @relation(fields: [sequenceId], references: [id])
+  currentStep Int              @default(0)
+  status      EnrollmentStatus @default(active)
+  nextRunAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([status, nextRunAt])
+  @@index([leadId])
+}
+
+model Template {
+  id        String         @id @default(uuid())
+  name      String         @unique
+  channel   Channel
+  subject   String? // email only
+  body      String // supports {{variables}}
+  steps     SequenceStep[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
