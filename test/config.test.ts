@@ -25,4 +25,27 @@ describe('loadConfig', () => {
       /DATABASE_URL/,
     );
   });
+
+  it('defaults messaging and email to dry-run', () => {
+    expect(loadConfig(validEnv)).toMatchObject({
+      MESSAGING_PROVIDER: 'dry-run',
+      EMAIL_PROVIDER: 'dry-run',
+    });
+  });
+
+  it("requires a provider's credentials only when it is selected", () => {
+    expect(() =>
+      loadConfig({ ...validEnv, EMAIL_PROVIDER: 'resend', EMAIL_FROM: 'a@b.co' }),
+    ).toThrow(/RESEND_API_KEY/);
+    expect(() =>
+      loadConfig({ ...validEnv, MESSAGING_PROVIDER: 'whatsapp', WHATSAPP_ACCESS_TOKEN: 't' }),
+    ).toThrow(/WHATSAPP_PHONE_NUMBER_ID/);
+    expect(loadConfig({ ...validEnv, RESEND_API_KEY: '' }).RESEND_API_KEY).toBeUndefined();
+  });
+
+  it('rejects an unimplemented provider', () => {
+    expect(() => loadConfig({ ...validEnv, MESSAGING_PROVIDER: 'twilio' })).toThrow(
+      /MESSAGING_PROVIDER/,
+    );
+  });
 });

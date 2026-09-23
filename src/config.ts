@@ -2,9 +2,10 @@ import { isSupportedCountry, type CountryCode } from 'libphonenumber-js';
 import { z } from 'zod';
 
 // Empty values in .env (e.g. `TYPEFORM_WEBHOOK_SECRET=`) mean "not set".
-const optionalSecret = z.preprocess((v) => (v === '' ? undefined : v), z.string().optional());
+const emptyAsUndefined = (v: unknown) => (v === '' ? undefined : v);
+const optionalSecret = z.preprocess(emptyAsUndefined, z.string().optional());
 
-const configSchema = z.object({
+const baseSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -22,6 +23,49 @@ const configSchema = z.object({
   // A form provider's webhook is only enabled when its secret is set.
   FORM_WEBHOOK_SECRET: optionalSecret,
   TYPEFORM_WEBHOOK_SECRET: optionalSecret,
+
+  // JSON file with the scoring rules, tiers and disqualifiers used by the worker.
+  SCORING_RULES_PATH: z.string().min(1).default('config/scoring.json'),
+
+  // First contact: channel strategy per tier, quiet hours (JSON).
+  CONTACT_CONFIG_PATH: z.string().min(1).default('config/contact.json'),
+  // Where hot-lead alerts go; alerts are skipped when unset.
+  SALES_ALERT_EMAIL: z.preprocess(emptyAsUndefined, z.email().optional()),
+
+  // `dry-run` logs messages instead of sending them.
+  MESSAGING_PROVIDER: z.enum(['dry-run', 'whatsapp']).default('dry-run'),
+  WHATSAPP_ACCESS_TOKEN: optionalSecret,
+  WHATSAPP_PHONE_NUMBER_ID: optionalSecret,
+
+  EMAIL_PROVIDER: z.enum(['dry-run', 'resend']).default('dry-run'),
+  // Sender address, e.g. "Acme Sales <sales@acme.com>".
+  EMAIL_FROM: optionalSecret,
+  RESEND_API_KEY: optionalSecret,
+});
+
+// Credentials are only required for the provider actually selected.
+const requiredFor: [
+  keyof z.infer<typeof baseSchema>,
+  string,
+  (keyof z.infer<typeof baseSchema>)[],
+][] = [
+  ['MESSAGING_PROVIDER', 'whatsapp', ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID']],
+  ['EMAIL_PROVIDER', 'resend', ['RESEND_API_KEY', 'EMAIL_FROM']],
+];
+
+const configSchema = baseSchema.superRefine((config, ctx) => {
+  for (const [selector, value, keys] of requiredFor) {
+    if (config[selector] !== value) continue;
+    for (const key of keys) {
+      if (!config[key]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `Required when ${selector}=${value}`,
+        });
+      }
+    }
+  }
 });
 
 export type Config = z.infer<typeof configSchema>;

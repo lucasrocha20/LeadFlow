@@ -1,0 +1,138 @@
+{
+  "tiers": { "hot": 60, "warm": 30 },
+  "freeEmailDomains": [
+    "gmail.com",
+    "googlemail.com",
+    "hotmail.com",
+    "hotmail.com.br",
+    "outlook.com",
+    "live.com",
+    "msn.com",
+    "yahoo.com",
+    "yahoo.com.br",
+    "icloud.com",
+    "me.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+    "bol.com.br",
+    "uol.com.br",
+    "terra.com.br",
+    "ig.com.br"
+  ],
+  "rules": [
+    {
+      "id": "business-email",
+      "description": "Email on a company domain rather than a free provider",
+      "points": 20,
+      "when": { "fact": "emailType", "op": "eq", "value": "business" }
+    },
+    {
+      "id": "valid-phone",
+      "description": "A phone number that parsed to E.164",
+      "points": 10,
+      "when": { "fact": "phone", "op": "exists", "value": true }
+    },
+    {
+      "id": "has-company",
+      "points": 5,
+      "when": { "fact": "company", "op": "exists", "value": true }
+    },
+    {
+      "id": "budget-high",
+      "description": "Budget of 10k or more (numeric answer or range label)",
+      "points": 30,
+      "when": {
+        "any": [
+          { "fact": "fields.budget", "op": "gte", "value": 10000 },
+          { "fact": "fields.budget", "op": "in", "value": ["10k-50k", "50k+"] }
+        ]
+      }
+    },
+    {
+      "id": "budget-mid",
+      "description": "Budget from 5k up to 10k",
+      "points": 15,
+      "when": {
+        "any": [
+          {
+            "all": [
+              { "fact": "fields.budget", "op": "gte", "value": 5000 },
+              { "fact": "fields.budget", "op": "lt", "value": 10000 }
+            ]
+          },
+          { "fact": "fields.budget", "op": "eq", "value": "5k-10k" }
+        ]
+      }
+    },
+    {
+      "id": "company-size-mid-large",
+      "points": 20,
+      "when": {
+        "fact": "fields.company_size",
+        "op": "in",
+        "value": ["50-200", "200-1000", "1000+"]
+      }
+    },
+    {
+      "id": "source-website",
+      "description": "Came through our own website form",
+      "points": 5,
+      "when": { "fact": "source", "op": "eq", "value": "website" }
+    },
+    {
+      "id": "paid-campaign",
+      "points": 10,
+      "when": { "fact": "utm.medium", "op": "in", "value": ["cpc", "ppc", "paid", "paid_social"] }
+    }
+  ],
+  "disqualifiers": [
+    {
+      "id": "no-valid-contact",
+      "description": "Neither a valid email nor a valid phone number",
+      "when": {
+        "all": [
+          { "fact": "email", "op": "exists", "value": false },
+          { "fact": "phone", "op": "exists", "value": false }
+        ]
+      }
+    },
+    {
+      "id": "no-consent",
+      "description": "Did not consent to be contacted on any channel",
+      "when": {
+        "all": [
+          { "fact": "consentEmail", "op": "eq", "value": false },
+          { "fact": "consentMessaging", "op": "eq", "value": false }
+        ]
+      }
+    },
+    {
+      "id": "blocked-domain",
+      "description": "Disposable or blocked email domain",
+      "when": {
+        "fact": "emailDomain",
+        "op": "in",
+        "value": [
+          "mailinator.com",
+          "guerrillamail.com",
+          "10minutemail.com",
+          "tempmail.com",
+          "temp-mail.org",
+          "yopmail.com",
+          "trashmail.com",
+          "sharklasers.com"
+        ]
+      }
+    },
+    {
+      "id": "spam-content",
+      "description": "Typical spam phrases in the name, company or answers",
+      "when": {
+        "fact": "text",
+        "op": "matches",
+        "value": "\\b(viagra|casino|crypto giveaway|seo services|backlinks|guest post|loan offer)\\b"
+      }
+    }
+  ]
+}

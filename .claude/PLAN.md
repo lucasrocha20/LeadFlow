@@ -120,7 +120,7 @@ Implementation notes:
 - Merge policy: match on email or phone (oldest lead wins) and fill blanks only. First-touch UTM wins, answers (`Lead.fields`) are merged with the newest winning, and consent stays once given. Each submission's raw payload is kept on its `captured` event. Advisory locks on email/phone serialize concurrent captures of the same person.
 - Queue: the job id is the `captured` event id. If enqueueing fails after the commit, the webhook returns 500, and the provider's retry hits the dedupe path, which enqueues the job again.
 
-### Phase 2 — Qualification
+### Phase 2 — Qualification ✅ (done 2026-09-23, LLM pass not done)
 
 1. Rule-based scoring engine that reads JSON rules (e.g. budget field, company size, source, valid phone, business email vs. free email).
 2. Map score to tier: hot / warm / cold / disqualified (thresholds come from config).
@@ -130,7 +130,14 @@ Implementation notes:
 
 **Done when:** unit tests cover each rule, and fixture leads land in the expected tiers.
 
-### Phase 3 — Immediate contact
+Implementation notes:
+
+- The rules live in `config/scoring.json` (path set by `SCORING_RULES_PATH`) and are validated with Zod when the worker starts. Conditions are `{ fact, op, value }` with `eq | in | gt | gte | lt | lte | exists | matches`, combined with `all` / `any` / `not`. Facts are the lead's columns (`fields.<name>` and `utm.<key>` reach inside the JSON) plus the derived `emailDomain`, `emailType` (business / free / none) and `text` (for spam patterns). Rule points add up. `tiers.hot` / `tiers.warm` are the minimum scores, and any matching disqualifier gives the `disqualified` tier.
+- The worker (`src/worker.ts`, a separate process) consumes `lead.captured`. Scoring is idempotent per capture (`dedupeKey = scored:<captured event id>`), and each new submission from a merged lead is scored again. Status moves only between `new`, `qualified` and `disqualified`. A lead that has moved past those (contacted, engaged, opted out, …) keeps its status, but its score and tier still update.
+- `lead.qualified` is enqueued only for hot/warm/cold leads (job id = scored event id).
+- **For Phase 3:** a re-submission enqueues `lead.qualified` again. The contact worker must therefore only act on leads whose status is still `qualified`, and must check consent per channel.
+
+### Phase 3 — Immediate contact ✅ (done 2026-09-23, dry-run verified; real providers untested)
 
 1. `MessagingAdapter` (WhatsApp/SMS) and `EmailAdapter` interfaces: `send(to, template, vars) → externalId`.
 2. Implement the first providers (e.g. WhatsApp Cloud API + Resend). Include a **dry-run/console adapter** for development.
@@ -140,6 +147,16 @@ Implementation notes:
 6. Retry with backoff when a send fails, and record `message_sent` or `message_failed`.
 
 **Done when:** a qualified lead gets its first message within about 1 minute (dry-run in dev, real sandbox in staging).
+
+Implementation notes:
+
+- Providers: WhatsApp Cloud API (`MESSAGING_PROVIDER=whatsapp`), Resend (`EMAIL_PROVIDER=resend`) and `dry-run` (the default, which logs the rendered message). They are called with plain `fetch`, with no SDKs. Twilio/SMS and SendGrid are not implemented; SMS has no provider, so the planner skips it.
+- Templates live in the `Template` table (`npm run db:seed` creates the defaults) and use `{{var}}` / `{{var|fallback}}`. A variable with no value and no fallback fails the message permanently. WhatsApp always sends the approved template by `name` + `locale`, and the variables in `body` fill its parameters in order.
+- The channel strategy and quiet hours live in `config/contact.json` (`CONTACT_CONFIG_PATH`). The worker refuses to start if a template it references is missing from the database.
+- Flow: `lead.qualified` → the planner picks messages by the lead's **current** tier, status (`qualified`/`contacted`), consent and address, then enqueues one `message.send` job per message. Quiet hours apply to WhatsApp/SMS as a job delay, in the lead's time zone (or the default one). Email goes out right away. `SALES_ALERT_EMAIL` gets an email alert for hot leads (`rep_notified` event).
+- Idempotency: each channel gets at most one first contact per lead (`first-contact:<lead>:<channel>`), and each lead at most one rep alert (`rep-alert:<lead>`). A re-qualification to a higher tier only adds the channels not contacted yet. The send job re-checks eligibility when it runs, since the lead may have opted out during quiet hours.
+- Retries: 6 attempts with exponential backoff (5s…80s). 429/5xx/network errors are retried. Other 4xx errors, a missing template and missing variables are permanent (BullMQ `UnrecoverableError`). `message_failed` is recorded once, when the failure is permanent or on the last attempt. The first successful lead message moves `qualified` → `contacted`.
+- Known gap: if the process dies after the provider accepted a message but before the event is written, the retry sends it again. Resend dedupes this with the `Idempotency-Key`; WhatsApp has no equivalent.
 
 ### Phase 4 — Scheduled follow-up
 
@@ -181,7 +198,7 @@ Implementation notes:
 ## Open decisions
 
 - Which CRM goes first (HubSpot vs. Pipedrive vs. other)?
-- Which messaging provider (WhatsApp Cloud API directly vs. Twilio)?
+- Which messaging provider (WhatsApp Cloud API directly vs. Twilio)? _Phase 3 implemented WhatsApp Cloud API + Resend behind adapters; confirm before going live._
 - Which form sources matter at launch?
 - Is a UI needed in v1, or are CRM + admin endpoints enough?
 - Hosting target (e.g. Fly.io, Railway, AWS, GCP)?

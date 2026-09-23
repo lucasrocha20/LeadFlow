@@ -1,0 +1,65 @@
+[
+  {
+    "name": "enterprise buyer on a free email",
+    "expectedTier": "hot",
+    "lead": {
+      "email": "carla.mendes@gmail.com",
+      "phone": "+5531991234567",
+      "company": "Mendes Engenharia",
+      "fields": { "budget": 50000, "company_size": "1000+" }
+    }
+  },
+  {
+    "name": "business email with a mid budget",
+    "expectedTier": "warm",
+    "lead": {
+      "email": "rafael@lojadorafa.com.br",
+      "fields": { "budget": "7000" }
+    }
+  },
+  {
+    "name": "small shop from the website, free email",
+    "expectedTier": "cold",
+    "lead": {
+      "source": "website",
+      "email": "loja.bela@hotmail.com",
+      "phone": "+5521998765432",
+      "company": "Loja Bela"
+    }
+  },
+  {
+    "name": "just an email",
+    "expectedTier": "cold",
+    "lead": { "email": "someone@yahoo.com.br" }
+  },
+  {
+    "name": "spam in the message",
+    "expectedTier": "disqualified",
+    "lead": {
+      "email": "marketing@growthhacks.io",
+      "fields": { "message": "We offer cheap backlinks and guest post packages" }
+    }
+  },
+  {
+    "name": "disposable email address",
+    "expectedTier": "disqualified",
+    "lead": { "email": "qwerty@mailinator.com", "phone": "+5511987654321" }
+  },
+  {
+    "name": "great fit but no consent",
+    "expectedTier": "disqualified",
+    "lead": {
+      "email": "ceo@bigcorp.com",
+      "phone": "+5511987654321",
+      "company": "BigCorp",
+      "fields": { "budget": 100000, "company_size": "1000+" },
+      "consentEmail": false,
+      "consentMessaging": false
+    }
+  },
+  {
+    "name": "no valid contact data",
+    "expectedTier": "disqualified",
+    "lead": { "email": null, "phone": null, "company": "Ghost Ltd" }
+  }
+]

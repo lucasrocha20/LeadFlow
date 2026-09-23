@@ -1,4 +1,4 @@
-import type { Db } from '../db.js';
+import { asJson, isUniqueViolation, type Db } from '../db.js';
 import { Prisma, type Lead } from '../generated/prisma/client.js';
 import type { JobQueue } from '../queue.js';
 import type { LeadInput } from './types.js';
@@ -19,10 +19,6 @@ export interface CaptureResult {
 export type CaptureLead = (req: CaptureRequest) => Promise<CaptureResult>;
 
 type Tx = Prisma.TransactionClient;
-
-function asJson(value: unknown): Prisma.InputJsonValue {
-  return value as Prisma.InputJsonValue;
-}
 
 /**
  * Serializes captures that share an email or phone, so two concurrent submissions from
@@ -64,10 +60,6 @@ function mergeData(lead: Lead, input: LeadInput): Prisma.LeadUpdateInput {
     consentEmail: lead.consentEmail || input.consentEmail,
     consentMessaging: lead.consentMessaging || input.consentMessaging,
   };
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
 
 export function createCaptureLead(db: Db, queue: JobQueue): CaptureLead {

@@ -3,13 +3,14 @@
 import { randomUUID } from 'node:crypto';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { createFormAdapters } from '../../src/capture/adapters/index.js';
 import { createCaptureLead } from '../../src/capture/captureLead.js';
 import type { LeadInput } from '../../src/capture/types.js';
 import { createDb } from '../../src/db.js';
 import { LEAD_CAPTURED, createJobQueue, type JobQueue } from '../../src/queue.js';
+import { fakeQueue } from '../helpers.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
 const redisUrl = process.env['REDIS_URL'];
@@ -22,13 +23,6 @@ describe.skipIf(!databaseUrl)('captureLead (database)', () => {
     await db.lead.deleteMany({ where: { id: { in: [...leadIds] } } });
     await db.$disconnect();
   });
-
-  function fakeQueue() {
-    return {
-      enqueueLeadCaptured: vi.fn<JobQueue['enqueueLeadCaptured']>(async () => {}),
-      close: async () => {},
-    } satisfies JobQueue;
-  }
 
   function leadInput(overrides: Partial<LeadInput> = {}): LeadInput {
     return {

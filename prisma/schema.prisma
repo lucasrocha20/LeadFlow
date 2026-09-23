@@ -44,6 +44,7 @@ enum LeadEventType {
   status_changed
   crm_synced
   crm_sync_failed
+  rep_notified
 }
 
 enum EnrollmentStatus {
@@ -144,7 +145,10 @@ model Template {
   name      String         @unique
   channel   Channel
   subject   String? // email only
-  body      String // supports {{variables}}
+  body      String // supports {{variable}} and {{variable|fallback}}
+  // WhatsApp only: language of the approved template, e.g. "en_US" or "pt_BR". `name` must
+  // match the template name approved in Meta, and `body` its text (parameters in order).
+  locale    String?
   steps     SequenceStep[]
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt

@@ -1,0 +1,26 @@
+{
+  "quietHours": {
+    "start": "21:00",
+    "end": "08:00",
+    "channels": ["whatsapp", "sms"],
+    "defaultTimezone": "America/Sao_Paulo"
+  },
+  "tiers": {
+    "hot": {
+      "messages": [
+        { "channel": "whatsapp", "template": "first_contact_whatsapp" },
+        { "channel": "email", "template": "first_contact_email" }
+      ],
+      "repAlertTemplate": "rep_alert_hot_lead"
+    },
+    "warm": {
+      "messages": [
+        { "channel": "email", "template": "first_contact_email" },
+        { "channel": "whatsapp", "template": "first_contact_whatsapp" }
+      ]
+    },
+    "cold": {
+      "messages": [{ "channel": "email", "template": "first_contact_email" }]
+    }
+  }
+}

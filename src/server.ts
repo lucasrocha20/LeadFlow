@@ -11,7 +11,7 @@ const db = createDb(config.DATABASE_URL);
 // Fail fast instead of buffering commands while Redis is down, so webhooks return an error
 // (and the provider retries) rather than hanging.
 const redis = new Redis(config.REDIS_URL, { enableOfflineQueue: false });
-const queue = createJobQueue(redis);
+const queue = createJobQueue(redis, (err) => app.log.warn({ err }, 'redis connection error'));
 const formAdapters = createFormAdapters(config);
 
 const app = await buildApp({
