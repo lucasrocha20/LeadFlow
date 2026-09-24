@@ -6,16 +6,26 @@ export interface UnsubscribeDeps {
 }
 
 function page(reply: FastifyReply, status: number, title: string, body: string) {
-  return reply
-    .code(status)
-    .type('text/html; charset=utf-8')
-    .send(
-      `<!doctype html><html><head><meta charset="utf-8">` +
-        `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-        `<title>${title}</title></head>` +
-        `<body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem">` +
-        `<h1>${title}</h1>${body}</body></html>`,
-    );
+  return (
+    reply
+      .code(status)
+      .type('text/html; charset=utf-8')
+      // The URL carries the lead's token: never leak it in a Referer, cache it, or frame the page.
+      .header(
+        'content-security-policy',
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+      )
+      .header('referrer-policy', 'no-referrer')
+      .header('cache-control', 'no-store')
+      .header('x-content-type-options', 'nosniff')
+      .send(
+        `<!doctype html><html><head><meta charset="utf-8">` +
+          `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+          `<title>${title}</title></head>` +
+          `<body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem">` +
+          `<h1>${title}</h1>${body}</body></html>`,
+      )
+  );
 }
 
 /**

@@ -8,6 +8,7 @@ import { InvalidCursorError, getLead, listLeads } from '../../src/admin/leads.js
 import { computeMetrics } from '../../src/admin/metrics.js';
 import { createAdminService } from '../../src/admin/service.js';
 import { buildApp } from '../../src/app.js';
+import { dryRunCrmAdapter } from '../../src/crm/adapters/dryRun.js';
 import { createDb } from '../../src/db.js';
 import {
   followUpKey,
@@ -26,6 +27,10 @@ const redisUrl = process.env['REDIS_URL'];
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+const privacyDeps = {
+  crm: dryRunCrmAdapter({ info: () => {} }),
+  defaultCountry: 'BR' as const,
+};
 const thresholds = { queueBacklog: 1e9, queueWaitMinutes: 1e9, sendFailures: 2, windowMinutes: 15 };
 
 describe.skipIf(!databaseUrl)('admin (database)', () => {
@@ -285,7 +290,7 @@ describe.skipIf(!databaseUrl)('admin (database)', () => {
       const lead = await createLead({ status: 'contacted' });
       const queue = fakeQueue();
       const monitor = { stats: async () => [], retryFailed: async () => null };
-      const service = createAdminService({ db, queue, monitor, thresholds });
+      const service = createAdminService({ db, queue, monitor, thresholds, ...privacyDeps });
 
       const first = await enroll(lead.id, new Date(), 'paused');
       expect(await service.resumeEnrollment(first.id)).toMatchObject({
@@ -508,7 +513,13 @@ describe.skipIf(!databaseUrl)('admin (database)', () => {
     });
 
     it('serves the admin API and the Bull Board UI behind the token', async () => {
-      const service = createAdminService({ db, queue: fakeQueue(), monitor, thresholds });
+      const service = createAdminService({
+        db,
+        queue: fakeQueue(),
+        monitor,
+        thresholds,
+        ...privacyDeps,
+      });
       const app = await buildApp(
         testAppDeps({ admin: { token, service, boardQueues: monitor.queues } }),
       );

@@ -23,6 +23,8 @@ export interface CrmAdapter {
   updateStage(crmId: string, stage: Record<string, string>): Promise<void>;
   logActivity(crmId: string, activity: CrmActivity): Promise<void>;
   assignOwner(crmId: string, ownerId: string): Promise<void>;
+  /** Permanently deletes the contact (data-subject erasure). Already gone counts as done. */
+  deleteContact(crmId: string): Promise<void>;
 }
 
 /** Retrying won't help (validation error, missing scope…): the sync is dead-lettered. */

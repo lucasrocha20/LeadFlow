@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { presentedToken } from '../src/admin/auth.js';
+import { InvalidSubjectError } from '../src/admin/service.js';
 import { buildApp } from '../src/app.js';
 import { fakeAdminService, testAppDeps } from './helpers.js';
 
@@ -270,5 +271,99 @@ describe('GET /admin/api/metrics', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(service.metrics).not.toHaveBeenCalled();
+  });
+});
+
+describe('privacy requests', () => {
+  const erased = { erased: 1, crmDeleted: 0, suppressed: 2 };
+
+  it('exports by email and/or phone', async () => {
+    const { app, service } = await makeApp();
+    service.exportSubject.mockResolvedValue({
+      generatedAt: new Date(),
+      subject: {},
+      suppressed: false,
+      leads: [],
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/export',
+      payload: { email: 'Ana@Acme.com' },
+      headers: bearer,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(service.exportSubject).toHaveBeenCalledWith({ email: 'Ana@Acme.com' });
+
+    const empty = await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/export',
+      payload: {},
+      headers: bearer,
+    });
+    expect(empty.statusCode).toBe(400);
+  });
+
+  it('erases only with explicit confirmation', async () => {
+    const { app, service } = await makeApp();
+    service.eraseSubject.mockResolvedValue(erased);
+    const unconfirmed = await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/erase',
+      payload: { email: 'ana@acme.com' },
+      headers: bearer,
+    });
+    expect(unconfirmed.statusCode).toBe(400);
+    expect(service.eraseSubject).not.toHaveBeenCalled();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/erase',
+      payload: { email: 'ana@acme.com', confirm: true },
+      headers: bearer,
+    });
+    expect(res.json()).toEqual(erased);
+    expect(service.eraseSubject).toHaveBeenCalledWith({
+      subject: { email: 'ana@acme.com', phone: undefined },
+      leadIds: undefined,
+      deleteFromCrm: false,
+    });
+  });
+
+  it('erases by lead id, optionally from the CRM too', async () => {
+    const { app, service } = await makeApp();
+    service.eraseSubject.mockResolvedValue(erased);
+    const leadId = randomUUID();
+    await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/erase',
+      payload: { leadIds: [leadId], deleteFromCrm: true, confirm: true },
+      headers: bearer,
+    });
+    expect(service.eraseSubject).toHaveBeenCalledWith({
+      subject: undefined,
+      leadIds: [leadId],
+      deleteFromCrm: true,
+    });
+
+    const nothing = await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/erase',
+      payload: { confirm: true },
+      headers: bearer,
+    });
+    expect(nothing.statusCode).toBe(400);
+  });
+
+  it('rejects an address that cannot be normalized', async () => {
+    const { app, service } = await makeApp();
+    service.eraseSubject.mockRejectedValue(new InvalidSubjectError('Invalid phone'));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/api/privacy/erase',
+      payload: { phone: 'abc', confirm: true },
+      headers: bearer,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'invalid_subject', message: 'Invalid phone' });
   });
 });

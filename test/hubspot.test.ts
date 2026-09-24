@@ -121,6 +121,19 @@ describe('hubspotAdapter', () => {
     ]);
   });
 
+  it('permanently deletes a contact, treating an already deleted one as done', async () => {
+    const fetchMock = fakeFetch([204, null], [404, { message: 'not found' }], [403, {}]);
+    const crm = hubspotAdapter({ accessToken: 'tok', fetch: fetchMock });
+
+    await crm.deleteContact('101');
+    await crm.deleteContact('102');
+    await expect(crm.deleteContact('103')).rejects.toBeInstanceOf(CrmPermanentError);
+    expect(requests(fetchMock).slice(0, 2)).toEqual([
+      { method: 'POST', url: '/crm/v3/objects/contacts/gdpr-delete', body: { objectId: '101' } },
+      { method: 'POST', url: '/crm/v3/objects/contacts/gdpr-delete', body: { objectId: '102' } },
+    ]);
+  });
+
   it('classifies errors: 429 rate limit, 404 not found, 5xx retryable, other 4xx permanent', async () => {
     const call = (status: number, headers?: Record<string, string>) =>
       hubspotAdapter({ accessToken: 'tok', fetch: fakeFetch([status, { message: 'x' }, headers]) })

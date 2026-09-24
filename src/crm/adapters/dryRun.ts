@@ -17,6 +17,9 @@ export function dryRunCrmAdapter(log: Pick<Logger, 'info'>): CrmAdapter {
     async assignOwner(crmId, ownerId) {
       log.info({ crmId, ownerId }, 'dry-run crm: assign owner');
     },
+    async deleteContact(crmId) {
+      log.info({ crmId }, 'dry-run crm: delete contact');
+    },
     async logActivity(crmId, activity) {
       log.info({ crmId, ...activity }, 'dry-run crm: log activity');
     },

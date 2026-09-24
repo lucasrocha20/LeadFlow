@@ -15,7 +15,14 @@
     "definition": {
       "id": "lT4Z3j",
       "title": "Talk to sales",
-      "fields": []
+      "fields": [
+        {
+          "id": "f8",
+          "ref": "consent",
+          "type": "legal",
+          "title": "I agree to be contacted by email and WhatsApp about this request."
+        }
+      ]
     },
     "answers": [
       {

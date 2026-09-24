@@ -30,7 +30,15 @@ const typeformPayloadSchema = z.looseObject({
     form_id: z.string(),
     /** Unique per response, and stable across webhook retries. */
     token: z.string().min(1),
+    submitted_at: z.string().optional(),
     hidden: z.record(z.string(), z.unknown()).optional(),
+    definition: z
+      .looseObject({
+        fields: z
+          .array(z.looseObject({ id: z.string(), ref: z.string().optional(), title: z.string() }))
+          .optional(),
+      })
+      .optional(),
     answers: z.array(answerSchema).default([]),
   }),
 });
@@ -50,6 +58,8 @@ function answerValue(answer: Answer): unknown {
   }
   return value ?? null;
 }
+
+const CONSENT_REFS = ['consent', 'consent_email', 'consent_messaging'];
 
 const asText = (value: unknown) => (typeof value === 'string' ? value : null);
 
@@ -111,6 +121,15 @@ export function typeformAdapter(opts: {
         fields,
         consentEmail: consent_email === true || consent === true,
         consentMessaging: consent_messaging === true || consent === true,
+        consentEvidence: {
+          formId: response.form_id,
+          responseToken: response.token,
+          submittedAt: response.submitted_at,
+          // The consent questions exactly as the person saw them.
+          questions: (response.definition?.fields ?? [])
+            .filter((f) => f.ref && CONSENT_REFS.includes(f.ref))
+            .map((f) => ({ ref: f.ref, title: f.title })),
+        },
       };
     },
   };

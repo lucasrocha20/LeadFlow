@@ -203,7 +203,7 @@ Implementation notes:
 3. Alerts for queue backlog, provider errors and failed CRM syncs.
 4. Queue UI (Bull Board) protected by auth.
 
-### Phase 7 — Hardening and launch
+### Phase 7 — Hardening and launch ✅ (done 2026-09-23; steps 4–5 need a hosting target and the pilot itself — see docs/deploy.md)
 
 1. Security: verify webhook signatures, keep secrets in the environment/secret manager, rate-limit public endpoints.
 2. Compliance: store consent (LGPD/GDPR), respect opt-outs across channels, data retention and deletion endpoint.
@@ -219,4 +219,4 @@ Implementation notes:
 - Which messaging provider (WhatsApp Cloud API directly vs. Twilio)? _Phase 3 implemented WhatsApp Cloud API + Resend behind adapters; confirm before going live._
 - Which form sources matter at launch?
 - Is a UI needed in v1, or are CRM + admin endpoints enough?
-- Hosting target (e.g. Fly.io, Railway, AWS, GCP)?
+- Hosting target (e.g. Fly.io, Railway, AWS, GCP)? _Phase 7 ships a platform-neutral Docker image (API, worker, release step) and a runbook in `docs/deploy.md`; the platform is still to be chosen._

@@ -108,6 +108,15 @@ export function hubspotAdapter(opts: {
       await patchContact(crmId, { hubspot_owner_id: ownerId });
     },
 
+    async deleteContact(crmId) {
+      // GDPR delete: permanent, unlike DELETE /contacts/{id} which only archives.
+      try {
+        await call('POST', '/crm/v3/objects/contacts/gdpr-delete', { objectId: crmId });
+      } catch (err) {
+        if (!(err instanceof CrmNotFoundError)) throw err;
+      }
+    },
+
     async logActivity(crmId, activity) {
       const body = activity.body
         ? `<strong>${escapeHtml(activity.title)}</strong><br>${escapeHtml(activity.body).replaceAll('\n', '<br>')}`

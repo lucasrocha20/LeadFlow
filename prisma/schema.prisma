@@ -1,6 +1,10 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  // Explicit, so the output doesn't depend on whether a tsconfig.json is present when
+  // generating (the Docker build generates before copying it).
+  moduleFormat        = "esm"
+  importFileExtension = "js"
 }
 
 datasource db {
@@ -49,6 +53,11 @@ enum LeadEventType {
   sequence_resumed
 }
 
+enum ConsentPurpose {
+  email
+  messaging
+}
+
 enum EnrollmentStatus {
   active
   // Paused by an operator: no steps run until it's resumed. Replies and opt-outs still stop it.
@@ -90,6 +99,7 @@ model Lead {
 
   events      LeadEvent[]
   enrollments Enrollment[]
+  consents    ConsentRecord[]
 
   @@index([email])
   @@index([phone])
@@ -168,4 +178,42 @@ model Template {
   steps     SequenceStep[]
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
+}
+
+// Consent ledger (LGPD/GDPR evidence): every grant and withdrawal, append-only. The Lead's
+// consent flags are the current state; these rows show when, where and how it was given.
+model ConsentRecord {
+  id        String         @id @default(uuid())
+  leadId    String
+  lead      Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  purpose   ConsentPurpose
+  granted   Boolean
+  // Where it came from: the form source ("website", "typeform"), "reply", "unsubscribe_link"…
+  source    String
+  // What was shown and captured, e.g. consent text/version, form and response ids, submittedAt.
+  evidence  Json?
+  createdAt DateTime       @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+// Addresses that must never be contacted again, kept after their lead is erased (so a new
+// form submission can't restart contact). Only hashes: sha256 of "email:<address>" or
+// "phone:<E.164>".
+model Suppression {
+  hash      String   @id
+  reason    String // "erasure_request" | "opted_out"
+  createdAt DateTime @default(now())
+}
+
+// Audit log of erasures. Holds no personal data: subjects are the suppression hashes.
+model Erasure {
+  id            String   @id @default(uuid())
+  reason        String // "request" | "retention"
+  leadCount     Int
+  crmDeleted    Int      @default(0)
+  subjectHashes String[]
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
 }

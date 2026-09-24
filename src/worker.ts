@@ -1,41 +1,12 @@
-import { Worker, type Processor } from 'bullmq';
 import { Redis } from 'ioredis';
 import { pino } from 'pino';
-import { evaluateAlerts, notifyAlerts, redisAlertStore, webhookSender } from './admin/alerts.js';
-import { alertThresholds, loadConfig } from './config.js';
-import { createMessageAdapters } from './contact/adapters/index.js';
+import { loadConfig } from './config.js';
 import { followUpSequences, loadContactConfig, referencedTemplates } from './contact/config.js';
-import { createPlanFirstContact } from './contact/planFirstContact.js';
-import { createSendMessage, runSendMessageJob } from './contact/sendMessage.js';
-import { createCrmAdapter } from './crm/adapters/index.js';
 import { loadCrmConfig } from './crm/config.js';
-import {
-  createSyncLead,
-  deadLetterCrmSync,
-  findLeadsToSync,
-  runCrmSyncJob,
-} from './crm/syncLead.js';
 import { createDb } from './db.js';
-import { reconcileEnrollments } from './followup/enrollment.js';
-import { createRunFollowUpStep } from './followup/runStep.js';
-import { unsubscribeUrl } from './inbound/unsubscribe.js';
 import { loggerOptions } from './logger.js';
-import { createQualifyLead } from './qualification/qualifyLead.js';
+import { startPipeline } from './pipeline.js';
 import { loadScoringRules } from './qualification/rules.js';
-import {
-  CRM_SYNC,
-  FOLLOW_UP_STEP,
-  LEAD_CAPTURED,
-  LEAD_QUALIFIED,
-  SEND_MESSAGE,
-  createJobQueue,
-  createQueueMonitor,
-  type CrmSyncJob,
-  type FollowUpStepJob,
-  type LeadCapturedJob,
-  type LeadQualifiedJob,
-  type SendMessageJob,
-} from './queue.js';
 
 // Background worker: consumes pipeline jobs. Runs as its own process, next to the API.
 const config = loadConfig();
@@ -72,197 +43,23 @@ const db = createDb(config.DATABASE_URL);
 
 // Producer connection: fail fast so the job fails and BullMQ retries it later.
 const redis = new Redis(config.REDIS_URL, { enableOfflineQueue: false });
-const queue = createJobQueue(redis, (err) => log.warn({ err }, 'redis connection error'));
 // Workers use blocking commands, which BullMQ requires to retry indefinitely.
 const workerConnection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
-const adapters = createMessageAdapters(config, log);
-const qualifyLead = createQualifyLead(db, queue, rules);
-const planFirstContact = createPlanFirstContact({
+const pipeline = startPipeline({
+  config,
   db,
-  queue,
-  config: contactConfig,
-  adapters,
-  salesAlertEmail: config.SALES_ALERT_EMAIL,
+  log,
+  rules,
+  contactConfig,
+  crmConfig,
+  redis,
+  workerConnection,
 });
-const unsubscribeSecret = config.UNSUBSCRIBE_SECRET;
-const baseUrl = config.PUBLIC_BASE_URL;
-const sendMessage = createSendMessage({
-  db,
-  adapters,
-  queue,
-  followUpSequences: sequences,
-  unsubscribeUrl:
-    baseUrl && unsubscribeSecret
-      ? (leadId) => unsubscribeUrl(baseUrl, unsubscribeSecret, leadId)
-      : undefined,
-});
-const crm = createCrmAdapter(config, log);
-const syncLead = createSyncLead({ db, crm, config: crmConfig });
-const runFollowUpStep = createRunFollowUpStep({
-  db,
-  queue,
-  quietHours: contactConfig.quietHours,
-});
-
-function startWorker<T>(name: string, processor: Processor<T>, concurrency: number) {
-  const worker: Worker<T> = new Worker<T>(name, processor, {
-    connection: workerConnection,
-    concurrency,
-  });
-  worker.on('failed', (job, err) => {
-    log.error({ err, queue: name, jobId: job?.id, attempts: job?.attemptsMade }, 'job failed');
-  });
-  worker.on('error', (err) => log.error({ err, queue: name }, 'worker error'));
-  return worker;
-}
-
-const workers: { close(): Promise<void> }[] = [
-  startWorker<LeadCapturedJob>(
-    LEAD_CAPTURED,
-    async (job) => {
-      const result = await qualifyLead(job.data);
-      if (!result) {
-        log.warn({ jobId: job.id, leadId: job.data.leadId }, 'lead not found; skipped');
-        return;
-      }
-      const { leadId, score, tier, disqualifiedBy, duplicate } = result;
-      log.info({ jobId: job.id, leadId, score, tier, disqualifiedBy, duplicate }, 'lead scored');
-    },
-    5,
-  ),
-
-  startWorker<LeadQualifiedJob>(
-    LEAD_QUALIFIED,
-    async (job) => {
-      const plan = await planFirstContact(job.data);
-      if (!plan) {
-        log.warn({ jobId: job.id, leadId: job.data.leadId }, 'lead not found; skipped');
-        return;
-      }
-      log.info({ jobId: job.id, ...plan }, 'first contact planned');
-    },
-    5,
-  ),
-
-  startWorker<SendMessageJob>(
-    SEND_MESSAGE,
-    async (job) => {
-      const { leadId, kind, channel, template } = job.data;
-      const outcome = await runSendMessageJob(sendMessage, job);
-      log.info({ jobId: job.id, leadId, kind, channel, template, ...outcome }, 'message job done');
-    },
-    10,
-  ),
-
-  startWorker<FollowUpStepJob>(
-    FOLLOW_UP_STEP,
-    async (job) => {
-      const outcome = await runFollowUpStep(job.data);
-      log.info({ jobId: job.id, ...job.data, ...outcome }, 'follow-up step done');
-    },
-    5,
-  ),
-];
-
-// One lead at a time keeps each lead's timeline in order and stays well under CRM rate limits.
-const crmWorker: Worker<CrmSyncJob> = startWorker<CrmSyncJob>(
-  CRM_SYNC,
-  async (job) => {
-    const outcome = await runCrmSyncJob(syncLead, job, {
-      deadLetter: async (leadId, err) => {
-        log.error({ err, leadId }, 'crm sync dead-lettered');
-        await deadLetterCrmSync(db, queue, leadId, err);
-      },
-      rateLimit: async (ms) => {
-        log.warn({ ms }, 'crm rate limited; pausing sync');
-        await crmWorker.rateLimit(ms);
-        return Worker.RateLimitError();
-      },
-    });
-    if (outcome.status === 'synced')
-      log.info({ leadId: job.data.leadId, ...outcome }, 'crm synced');
-  },
-  1,
-);
-workers.push(crmWorker);
-
-// The database holds the follow-up schedule (Enrollment.nextRunAt). Rebuild the near-term
-// part of it in Redis now and periodically, in case jobs were lost (Redis restart, failed
-// enqueue). Existing jobs are left alone thanks to deterministic job ids.
-const RECONCILE_EVERY_MS = 10 * 60_000;
-async function reconcile() {
-  try {
-    const count = await reconcileEnrollments(db, (job) => queue.enqueueFollowUpStep(job), {
-      horizonMs: 2 * RECONCILE_EVERY_MS,
-    });
-    log.debug({ enrollments: count }, 'follow-up schedule reconciled');
-  } catch (err) {
-    log.error({ err }, 'follow-up reconcile failed');
-  }
-}
-await reconcile();
-const reconcileTimer = setInterval(() => void reconcile(), RECONCILE_EVERY_MS);
-
-// CRM sync is pull-based: find leads with events not pushed yet and queue one job per lead.
-const CRM_SWEEP_EVERY_MS = 30_000;
-async function crmSweep() {
-  try {
-    const leadIds = await findLeadsToSync(db, { syncDisqualified: crmConfig.syncDisqualified });
-    for (const leadId of leadIds) await queue.enqueueCrmSync({ leadId });
-    if (leadIds.length > 0) log.debug({ leads: leadIds.length }, 'crm sync queued');
-  } catch (err) {
-    log.error({ err }, 'crm sweep failed');
-  }
-}
-await crmSweep();
-const crmSweepTimer = setInterval(() => void crmSweep(), CRM_SWEEP_EVERY_MS);
-
-// Alerts: queue backlog, failed sends, parked CRM syncs. Redis holds the cooldowns, so
-// several workers (or a restart) don't repeat a notification.
-const ALERT_CHECK_EVERY_MS = 60_000;
-const monitor = createQueueMonitor(redis, (err) => log.warn({ err }, 'redis connection error'));
-const alertStore = redisAlertStore(redis);
-const sendAlert = config.ALERT_WEBHOOK_URL ? webhookSender(config.ALERT_WEBHOOK_URL) : undefined;
-async function checkAlerts() {
-  try {
-    const alerts = await evaluateAlerts({ db, monitor, thresholds: alertThresholds(config) });
-    await notifyAlerts({
-      alerts,
-      store: alertStore,
-      send: sendAlert,
-      cooldownMs: config.ALERT_COOLDOWN_MINUTES * 60_000,
-      log,
-    });
-  } catch (err) {
-    log.error({ err }, 'alert check failed');
-  }
-}
-await checkAlerts();
-const alertTimer = setInterval(() => void checkAlerts(), ALERT_CHECK_EVERY_MS);
-
-log.info(
-  {
-    queues: [LEAD_CAPTURED, LEAD_QUALIFIED, SEND_MESSAGE, FOLLOW_UP_STEP, CRM_SYNC],
-    email: adapters.email?.provider,
-    whatsapp: adapters.whatsapp?.provider,
-    salesAlerts: Boolean(config.SALES_ALERT_EMAIL),
-    followUpSequences: sequences,
-    unsubscribeLinks: Boolean(baseUrl && unsubscribeSecret),
-    crm: crm.provider,
-    alertWebhook: Boolean(sendAlert),
-  },
-  'worker started',
-);
 
 async function shutdown(signal: string) {
   log.info({ signal }, 'shutting down');
-  clearInterval(reconcileTimer);
-  clearInterval(crmSweepTimer);
-  clearInterval(alertTimer);
-  await Promise.all(workers.map((w) => w.close()));
-  await queue.close();
-  await monitor.close();
+  await pipeline.close();
   redis.disconnect();
   workerConnection.disconnect();
   await db.$disconnect();

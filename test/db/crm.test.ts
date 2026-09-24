@@ -75,6 +75,9 @@ function fakeCrm() {
     logActivity: vi.fn<CrmAdapter['logActivity']>(async (crmId, activity) => {
       contacts.get(crmId)!.notes.push(activity);
     }),
+    deleteContact: vi.fn<CrmAdapter['deleteContact']>(async (crmId) => {
+      contacts.delete(crmId);
+    }),
   } satisfies CrmAdapter;
   return { crm, contacts };
 }

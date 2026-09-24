@@ -13,6 +13,12 @@ const KIND: Record<string, string> = {
   rep_alert: 'rep alert',
 };
 
+const OPT_OUT_SOURCE: Record<string, string> = {
+  reply: 'reply',
+  unsubscribe_link: 'unsubscribe link',
+  suppression_list: 'suppression list (this address was erased or opted out before)',
+};
+
 const text = (value: unknown) => (value === undefined || value === null ? '' : String(value));
 const lines = (...parts: (string | false | null | undefined)[]) =>
   parts.filter((p): p is string => Boolean(p)).join('\n');
@@ -70,10 +76,7 @@ export function describeEvent(
           lines(p['subject'] !== undefined && `Subject: ${text(p['subject'])}`, text(p['text'])),
         ];
       case 'opted_out':
-        return [
-          'Opted out of all messages',
-          `Via ${p['source'] === 'unsubscribe_link' ? 'unsubscribe link' : 'reply'}`,
-        ];
+        return ['Opted out of all messages', `Via ${OPT_OUT_SOURCE[text(p['source'])] ?? 'reply'}`];
       case 'enrolled':
         return [`Enrolled in follow-up sequence ${text(p['sequence'])}`, ''];
       case 'sequence_stopped':

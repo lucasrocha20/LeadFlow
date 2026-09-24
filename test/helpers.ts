@@ -44,5 +44,7 @@ export function fakeAdminService() {
     requeueCrmDeadLetters: vi.fn<AdminService['requeueCrmDeadLetters']>(notUsed),
     metrics: vi.fn<AdminService['metrics']>(notUsed),
     alerts: vi.fn<AdminService['alerts']>(notUsed),
+    exportSubject: vi.fn<AdminService['exportSubject']>(notUsed),
+    eraseSubject: vi.fn<AdminService['eraseSubject']>(notUsed),
   } satisfies AdminService;
 }

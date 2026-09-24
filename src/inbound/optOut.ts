@@ -1,6 +1,7 @@
 import { asJson, type Db } from '../db.js';
 import type { Lead, Prisma } from '../generated/prisma/client.js';
 import { stopEnrollments } from '../followup/enrollment.js';
+import { withdrawConsent } from '../privacy/consent.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -28,17 +29,21 @@ export function isOptOut(
   return [firstLine, message.subject ?? ''].some((text) => wanted.has(normalizeKeyword(text)));
 }
 
+export type OptOutSource = 'reply' | 'unsubscribe_link' | 'suppression_list';
+
 /**
- * Marks the lead `do_not_contact`, records `opted_out` and stops its sequences. Pending
- * messages are dropped when they re-check the status at send time. Idempotent.
+ * Marks the lead `do_not_contact`, withdraws its consent, records `opted_out` and stops its
+ * sequences. Pending messages are dropped when they re-check the status at send time.
+ * Idempotent.
  */
 export async function optOutInTx(
   tx: Tx,
   lead: Pick<Lead, 'id' | 'status'>,
-  source: 'reply' | 'unsubscribe_link',
+  source: OptOutSource,
 ): Promise<boolean> {
   if (lead.status === 'do_not_contact') return false;
   await tx.lead.update({ where: { id: lead.id }, data: { status: 'do_not_contact' } });
+  await withdrawConsent(tx, lead.id, source);
   await tx.leadEvent.create({
     data: {
       leadId: lead.id,

@@ -21,7 +21,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:db": "node --env-file=.env node_modules/vitest/vitest.mjs run --no-file-parallelism test/db",
+    "test:db": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --no-file-parallelism test/db",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -41,6 +41,7 @@
   "dependencies": {
     "@bull-board/api": "^9.10.1",
     "@bull-board/fastify": "^9.10.1",
+    "@fastify/rate-limit": "^11.2.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "bullmq": "^6.3.8",

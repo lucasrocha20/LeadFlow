@@ -46,6 +46,17 @@ describe('typeformAdapter', () => {
       },
       consentEmail: true,
       consentMessaging: true,
+      consentEvidence: {
+        formId: 'lT4Z3j',
+        responseToken: 'a3a12ec67a1365927098a606107fac15',
+        submittedAt: '2026-09-23T12:00:00Z',
+        questions: [
+          {
+            ref: 'consent',
+            title: 'I agree to be contacted by email and WhatsApp about this request.',
+          },
+        ],
+      },
     });
   });
 
@@ -79,7 +90,25 @@ describe('websiteFormAdapter', () => {
       fields: { message: 'Quero uma demo', budget: '5k-10k' },
       consentEmail: true,
       consentMessaging: false,
+      consentEvidence: { submissionId: 'sub_123', receivedAt: expect.any(String) },
     });
+  });
+
+  it('keeps the consent evidence the website sends', () => {
+    const consent = {
+      text: 'I agree to receive emails about my request.',
+      version: 'v3',
+      at: '2026-09-23T12:00:00-03:00',
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0',
+      pageUrl: 'https://acme.com/contact',
+    };
+    expect(adapter.normalize({ ...payload, consent }).consentEvidence).toEqual({
+      submissionId: 'sub_123',
+      ...consent,
+      receivedAt: expect.any(String),
+    });
+    expect(() => adapter.normalize({ ...payload, consent: { at: 'yesterday' } })).toThrow();
   });
 
   it('derives a stable external id from the payload when submissionId is missing', () => {

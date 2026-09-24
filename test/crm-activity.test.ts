@@ -59,6 +59,13 @@ describe('describeEvent', () => {
       'Via unsubscribe link',
     ],
     [
+      'opted_out',
+      { source: 'suppression_list' },
+      null,
+      'LeadFlow: Opted out of all messages',
+      'Via suppression list (this address was erased or opted out before)',
+    ],
+    [
       'enrolled',
       { sequence: 'hot_follow_up' },
       null,

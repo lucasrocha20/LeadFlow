@@ -1,5 +1,8 @@
 import { asJson, isUniqueViolation, type Db } from '../db.js';
 import { Prisma, type Lead } from '../generated/prisma/client.js';
+import { optOutInTx } from '../inbound/optOut.js';
+import { recordConsentGrants } from '../privacy/consent.js';
+import { isSuppressed } from '../privacy/suppression.js';
 import type { JobQueue } from '../queue.js';
 import type { LeadInput } from './types.js';
 
@@ -21,11 +24,19 @@ export type CaptureLead = (req: CaptureRequest) => Promise<CaptureResult>;
 type Tx = Prisma.TransactionClient;
 
 /**
- * Serializes captures that share an email or phone, so two concurrent submissions from
- * the same person can't both miss the match and create two leads.
+ * Serializes captures (and erasures) that share an email or phone, so two concurrent
+ * submissions from the same person can't both miss the match and create two leads. Keys are
+ * locked in one sorted order, so callers locking several contacts can't deadlock.
  */
-async function lockContactKeys(tx: Tx, input: LeadInput) {
-  const keys = [input.email && `email:${input.email}`, input.phone && `phone:${input.phone}`]
+export async function lockContactKeys(
+  tx: Tx,
+  ...contacts: { email?: string | null; phone?: string | null }[]
+) {
+  const keys = [
+    ...new Set(
+      contacts.flatMap((c) => [c.email && `email:${c.email}`, c.phone && `phone:${c.phone}`]),
+    ),
+  ]
     .filter((k): k is string => !!k)
     .sort();
   for (const key of keys) {
@@ -118,6 +129,16 @@ export function createCaptureLead(db: Db, queue: JobQueue): CaptureLead {
             }),
           },
         });
+
+        await recordConsentGrants(
+          tx,
+          lead.id,
+          { email: input.consentEmail, messaging: input.consentMessaging },
+          source,
+          input.consentEvidence,
+        );
+        // An erased person who opted out or asked to be forgotten must stay uncontacted.
+        if (await isSuppressed(tx, input)) await optOutInTx(tx, lead, 'suppression_list');
 
         return { leadId: lead.id, eventId: event.id, duplicate: false };
       });

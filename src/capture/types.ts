@@ -24,6 +24,8 @@ export interface LeadInput {
   fields: Record<string, unknown>;
   consentEmail: boolean;
   consentMessaging: boolean;
+  /** Proof of the consent given (text shown, form/response ids, time…), stored in the ledger. */
+  consentEvidence?: Record<string, unknown>;
 }
 
 export interface WebhookRequest {

@@ -6,7 +6,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { adminAuth } from '../admin/auth.js';
 import { InvalidCursorError } from '../admin/leads.js';
-import type { AdminService } from '../admin/service.js';
+import { InvalidSubjectError, type AdminService } from '../admin/service.js';
 import { LeadStatus, LeadTier } from '../generated/prisma/client.js';
 
 export interface AdminDeps {
@@ -58,6 +58,25 @@ const metricsQuery = z
   .refine((r) => r.from < r.to, { message: '`from` must be before `to`' })
   .refine((r) => r.to.getTime() - r.from.getTime() <= 366 * DAY, {
     message: 'The range can span at most 366 days',
+  });
+
+const subjectBody = z
+  .object({ email: z.string().max(320).optional(), phone: z.string().max(40).optional() })
+  .refine((b) => b.email !== undefined || b.phone !== undefined, {
+    message: 'Give an email and/or a phone',
+  });
+const eraseBody = z
+  .object({
+    email: z.string().max(320).optional(),
+    phone: z.string().max(40).optional(),
+    leadIds: z.array(z.uuid()).min(1).max(1000).optional(),
+    /** Also permanently delete the contacts from the CRM. */
+    deleteFromCrm: z.boolean().default(false),
+    /** Erasure can't be undone. */
+    confirm: z.literal(true),
+  })
+  .refine((b) => b.email !== undefined || b.phone !== undefined || b.leadIds, {
+    message: 'Give an email, a phone and/or leadIds',
   });
 
 const idParams = z.object({ id: z.uuid() });
@@ -158,6 +177,42 @@ export const adminRoutes: FastifyPluginAsync<AdminDeps> = async (
   });
 
   app.get('/api/alerts', async () => ({ alerts: await service.alerts() }));
+
+  // Data-subject requests (LGPD art. 18 / GDPR arts. 15, 17). POST keeps personal data out of
+  // URLs and access logs; the logs below only carry counts.
+  const invalidSubject = (reply: FastifyReply, err: InvalidSubjectError) =>
+    reply.code(400).send({ error: 'invalid_subject', message: err.message });
+
+  app.post('/api/privacy/export', async (request, reply) => {
+    const body = parse(subjectBody, request.body, reply);
+    if (!body) return reply;
+    try {
+      const data = await service.exportSubject(body);
+      request.log.info({ leads: data.leads.length }, 'privacy export');
+      return data;
+    } catch (err) {
+      if (err instanceof InvalidSubjectError) return invalidSubject(reply, err);
+      throw err;
+    }
+  });
+
+  app.post('/api/privacy/erase', async (request, reply) => {
+    const body = parse(eraseBody, request.body, reply);
+    if (!body) return reply;
+    const { email, phone, leadIds, deleteFromCrm } = body;
+    try {
+      const result = await service.eraseSubject({
+        subject: email !== undefined || phone !== undefined ? { email, phone } : undefined,
+        leadIds,
+        deleteFromCrm,
+      });
+      request.log.info({ ...result, deleteFromCrm }, 'privacy erasure');
+      return result;
+    } catch (err) {
+      if (err instanceof InvalidSubjectError) return invalidSubject(reply, err);
+      throw err;
+    }
+  });
 
   if (boardQueues) {
     const serverAdapter = new FastifyAdapter();

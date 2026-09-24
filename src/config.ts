@@ -13,6 +13,23 @@ const baseSchema = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   REDIS_URL: z.url({ protocol: /^rediss?$/ }),
 
+  // Behind a load balancer or proxy: which X-Forwarded-For hops to trust for the client IP
+  // (used by rate limiting and logs). "true" trusts all, a number trusts that many hops, or a
+  // comma-separated list of proxy IPs/CIDRs. Leave unset when clients connect directly.
+  TRUST_PROXY: z.preprocess(
+    emptyAsUndefined,
+    z
+      .string()
+      .optional()
+      .transform((v): boolean | number | string => {
+        if (v === undefined || v === 'false') return false;
+        if (v === 'true') return true;
+        return /^\d+$/.test(v) ? Number(v) : v;
+      }),
+  ),
+  // Requests per minute per client IP on every route but /health; 0 disables the limit.
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).default(300),
+
   // Region used to parse phone numbers submitted without a country code.
   DEFAULT_PHONE_COUNTRY: z
     .custom<CountryCode>((v) => typeof v === 'string' && isSupportedCountry(v), {
@@ -68,6 +85,10 @@ const baseSchema = z.object({
     emptyAsUndefined,
     z.string().min(24, 'Use at least 24 characters (e.g. `openssl rand -hex 24`)').optional(),
   ),
+
+  // Data retention: leads with no activity for this many days (and no follow-up in progress)
+  // are erased by the worker; opted-out addresses stay suppressed. Unset keeps data forever.
+  DATA_RETENTION_DAYS: z.preprocess(emptyAsUndefined, z.coerce.number().int().min(30).optional()),
 
   // Alerts (checked by the worker every minute). Posted as {"text": …} (Slack-compatible
   // incoming webhook); without a URL they are only logged.

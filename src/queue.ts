@@ -96,26 +96,33 @@ export const messageJobId = (dedupeKey: string) => dedupeKey.replaceAll(':', '_'
 export const followUpJobId = (job: FollowUpStepJob) =>
   `followup-${job.enrollmentId}-${job.step}-${job.runAt}`;
 
+/** BullMQ key prefix; tests use their own so they never share queues with a running worker. */
+export interface QueueOptions {
+  prefix?: string;
+}
+
 export function createJobQueue(
   connection: Redis,
   /** Connection errors; without a listener BullMQ prints them to stderr. */
   onError: (err: Error) => void = () => {},
+  { prefix }: QueueOptions = {},
 ): JobQueue {
-  const leadCaptured = new Queue<LeadCapturedJob>(LEAD_CAPTURED, { connection, defaultJobOptions });
+  const base = { connection, ...(prefix && { prefix }) };
+  const leadCaptured = new Queue<LeadCapturedJob>(LEAD_CAPTURED, { ...base, defaultJobOptions });
   const leadQualified = new Queue<LeadQualifiedJob>(LEAD_QUALIFIED, {
-    connection,
+    ...base,
     defaultJobOptions,
   });
   const sendMessage = new Queue<SendMessageJob>(SEND_MESSAGE, {
-    connection,
+    ...base,
     defaultJobOptions: sendMessageJobOptions,
   });
   const followUpStep = new Queue<FollowUpStepJob>(FOLLOW_UP_STEP, {
-    connection,
+    ...base,
     defaultJobOptions,
   });
   const crmSync = new Queue<CrmSyncJob>(CRM_SYNC, {
-    connection,
+    ...base,
     defaultJobOptions: {
       // About 4 hours of retries (30s, 1m, 2m … 32m) before dead-lettering.
       attempts: 8,
@@ -126,7 +133,7 @@ export function createJobQueue(
     },
   });
   const crmDead = new Queue<CrmDeadLetter>(CRM_SYNC_DEAD, {
-    connection,
+    ...base,
     defaultJobOptions: { removeOnComplete: true },
   });
   const queues = [leadCaptured, leadQualified, sendMessage, followUpStep, crmSync, crmDead];
@@ -199,10 +206,11 @@ export interface QueueMonitor {
 export function createQueueMonitor(
   connection: Redis,
   onError: (err: Error) => void = () => {},
-  now: () => number = Date.now,
+  { prefix, now = Date.now }: QueueOptions & { now?: () => number } = {},
 ): QueueMonitor {
-  const work = new Map(WORK_QUEUES.map((name) => [name, new Queue(name, { connection })]));
-  const crmDead = new Queue<CrmDeadLetter>(CRM_SYNC_DEAD, { connection });
+  const base = { connection, ...(prefix && { prefix }) };
+  const work = new Map(WORK_QUEUES.map((name) => [name, new Queue(name, base)]));
+  const crmDead = new Queue<CrmDeadLetter>(CRM_SYNC_DEAD, base);
   const queues = [...work.values(), crmDead];
   for (const queue of queues) queue.on('error', onError);
 

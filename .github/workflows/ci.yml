@@ -21,3 +21,48 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # Database, queue and end-to-end tests against real Postgres and Redis.
+  db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: leadflow
+          POSTGRES_PASSWORD: leadflow
+          POSTGRES_DB: leadflow
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U leadflow -d leadflow"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://leadflow:leadflow@localhost:5432/leadflow
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      # The end-to-end test runs against the shipped templates and sequences.
+      - run: npm run db:seed
+      # Fails if the schema and the migrations have drifted apart.
+      - run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+      - run: npm run test:db
+
+  # The deployable image (API/worker) and the release step (migrations + seed) must build.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target runtime -t leadflow:ci .
+      - run: docker build --target release -t leadflow-release:ci .
